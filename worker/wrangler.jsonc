@@ -11,8 +11,8 @@
     {
       "binding": "DB",
       "database_name": "pos",
-      // Filled in by `wrangler d1 create pos` — see worker/README.md
-      "database_id": "PLACEHOLDER_RUN_D1_CREATE"
+      // Created 2026-09-22 in the APAC region.
+      "database_id": "66f8b8ee-7cf2-4f53-bf95-31c9565f988f"
     }
   ]
 }
