@@ -1,13 +1,13 @@
 # Hybrid POS — Web + Android
 
 Shared Supabase backend, two clients. Nothing compiles on your PC: the web app
-is a single HTML file you open in a browser, the APK is built by GitHub Actions.
+is a single HTML file you open in a browser, the APK is built by Codemagic.
 
 ```
 supabase/schema.sql      tables, RLS policies, seed products
 web/index.html           the entire web terminal
 android/                 Gradle project for the APK
-.github/workflows/       cloud APK build
+codemagic.yaml           cloud APK build + GitHub Release publishing
 ```
 
 ## 1. Supabase
@@ -39,15 +39,31 @@ the UI.
 
 ## 3. Android APK
 
-Push this repo to GitHub, then:
+Built on Codemagic, delivered through GitHub Releases. Config is in
+`codemagic.yaml`; the one-time UI setup is listed in the comment at the top of
+that file.
 
-1. Settings → Secrets and variables → Actions → add `SUPABASE_URL` and
-   `SUPABASE_ANON_KEY`.
-2. Actions → **Build APK** → Run workflow.
-3. Download `pos-debug-apk` from the run's artifacts, sideload it.
+Short version:
 
-The workflow runs the unit tests first, so a broken build fails before it
-produces an APK.
+1. codemagic.io → sign up with GitHub → add `pos-hybrid` as an Android app.
+2. Create two environment variable groups: `supabase` (`SUPABASE_URL`,
+   `SUPABASE_ANON_KEY`) and `github` (`GH_TOKEN` with `repo` scope). Mark all
+   three Secure.
+3. Push to `main` → it builds and emails you the APK.
+4. Tag a release → it builds and publishes the APK to GitHub Releases:
+
+```bash
+git tag v1.0 && git push origin v1.0
+```
+
+Then open the release page on the phone and install the `.apk` directly.
+
+Unit tests run before the APK is assembled, so a broken build fails early.
+
+Why not GitHub Actions: the original workflow worked, but this account's
+Actions artifact storage is full (~1.6 GB of old APK builds in another repo),
+so artifact uploads fail. Release assets don't count against that quota. The
+old workflow is still in git history at the first commit if you want it back.
 
 To build locally instead (needs JDK 17 + Android SDK):
 

@@ -1,0 +1,137 @@
+# Codemagic build config. Builds the APK in the cloud and emails it to you.
+# Docs: https://docs.codemagic.io/yaml/yaml-getting-started/
+#
+# One-time setup in the Codemagic UI (I can't do this part for you):
+#   1. codemagic.io -> sign up with GitHub -> authorize access to pos-hybrid.
+#   2. Add application -> pick saikat212567-cell/pos-hybrid -> "Android app".
+#   3. It detects this file automatically. Pick the `android-debug` workflow.
+#   4. Environment variables -> create group `supabase` with:
+#        SUPABASE_URL        = https://your-project.supabase.co
+#        SUPABASE_ANON_KEY   = your-anon-key
+#   5. Create group `github` with:
+#        GH_TOKEN            = a GitHub token with `repo` scope
+#      (github.com/settings/tokens -> fine-grained -> Contents: read+write
+#       on saikat212567-cell/pos-hybrid)
+#      Tick "Secure" on all three so they're masked in build logs.
+#   6. Start your first build.
+#
+# Push to main      -> builds, emails you the APK.
+# Push a v* tag     -> builds, and publishes the APK to GitHub Releases.
+#                      Release assets don't count against the Actions
+#                      artifact storage quota.
+
+workflows:
+  android-debug:
+    name: POS Android Debug APK
+    # Free tier runs on Linux. Android needs no macOS machine.
+    instance_type: linux_x2
+    max_build_duration: 30
+
+    environment:
+      java: 17
+      # Credentials come from this variable group, never from source.
+      # Until you create it in the UI the build still succeeds — it just
+      # produces an APK that can't reach Supabase (see the guard below).
+      groups:
+        - supabase
+        - github      # GH_TOKEN, for publishing releases
+
+    # Speeds up later builds; first run populates it.
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+
+    triggering:
+      events:
+        - push          # every push to main -> build + email
+        - tag           # a v* tag -> build + publish to GitHub Releases
+      branch_patterns:
+        - pattern: main
+          include: true
+      tag_patterns:
+        - pattern: 'v*'
+          include: true
+      # Codemagic also needs the webhook added in the UI for this to fire.
+      cancel_previous_builds: true
+
+    scripts:
+      - name: Warn if Supabase credentials are missing
+        script: |
+          # Not a hard failure: a credential-less APK is still useful for
+          # checking the UI. But it would silently never sync, so say so.
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "WARNING: SUPABASE_URL / SUPABASE_ANON_KEY are not set."
+            echo "The APK will build but cannot reach Supabase."
+            echo "Set them in the 'supabase' variable group in the Codemagic UI."
+          else
+            echo "Supabase credentials present."
+          fi
+
+      - name: Unit tests
+        working_directory: android
+        # Gradle is preinstalled on Codemagic machines, so there's no committed
+        # wrapper jar to keep in sync.
+        script: gradle test
+
+      - name: Assemble debug APK
+        working_directory: android
+        script: |
+          gradle assembleDebug \
+            -PsupabaseUrl="$SUPABASE_URL" \
+            -PsupabaseAnonKey="$SUPABASE_ANON_KEY"
+
+      - name: Publish to GitHub Releases (tag builds only)
+        script: |
+          # Only tagged builds become releases; plain pushes to main just email
+          # the APK. CM_TAG is set by Codemagic on tag-triggered builds.
+          if [ -z "$CM_TAG" ]; then
+            echo "Not a tag build, skipping release."
+            exit 0
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "GH_TOKEN not set — add it to the 'github' variable group."
+            exit 1
+          fi
+
+          # gh may not be on the image; install it if missing rather than
+          # failing a build that already produced a good APK.
+          if ! command -v gh >/dev/null; then
+            echo "Installing gh…"
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+              | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+              | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+            sudo apt-get update -qq && sudo apt-get install -y -qq gh
+          fi
+
+          APK=$(find android/app/build/outputs -name '*.apk' | head -1)
+          [ -n "$APK" ] || { echo "No APK found"; exit 1; }
+
+          # Name the file after the tag so downloads don't all collide as
+          # app-debug.apk in the phone's Downloads folder.
+          cp "$APK" "pos-$CM_TAG.apk"
+
+          # --clobber so re-running a build for the same tag replaces the asset
+          # instead of failing.
+          gh release create "$CM_TAG" "pos-$CM_TAG.apk" \
+            --repo saikat212567-cell/pos-hybrid \
+            --title "POS $CM_TAG" \
+            --generate-notes \
+            || gh release upload "$CM_TAG" "pos-$CM_TAG.apk" \
+                 --repo saikat212567-cell/pos-hybrid --clobber
+
+          echo "Published: https://github.com/saikat212567-cell/pos-hybrid/releases/tag/$CM_TAG"
+
+    artifacts:
+      - android/app/build/outputs/**/*.apk
+      # Test reports, so a failed run tells you which assertion broke.
+      - android/app/build/reports/tests/**
+
+    publishing:
+      email:
+        recipients:
+          - saikat212567@gmail.com
+        notify:
+          success: true
+          failure: true
