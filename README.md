@@ -18,19 +18,32 @@ plus a token — that's all both clients need.
 
 ## 2. Web app
 
-Edit the two constants at the top of the `<script>` block in
-[web/index.html](web/index.html):
+`API_BASE` in [web/index.html](web/index.html) already points at the deployed
+Worker. Paste your `POS_TOKEN` into `API_TOKEN` just below it:
 
 ```js
-const API_BASE = 'https://pos-api.your-subdomain.workers.dev';
-const API_TOKEN = 'the-token-you-set';
+const API_BASE = 'https://pos-api.saikat212567.workers.dev';
+const API_TOKEN = 'the-till-token-you-set';
 ```
 
-Then open the file. No server, no build. To host it: GitHub Pages, Netlify
-drop, or Cloudflare Pages — it's one static file.
+Then open the file. No server, no build.
 
-Before you fill these in it runs on a demo catalog so you can click through the
-UI.
+Before you fill the token in it runs on a demo catalog, so you can click
+through the UI without a backend.
+
+### Serving the web app
+
+The token sits in the page source, so anyone who can load the page can read it.
+That's tolerable for the till token (it only lists products and inserts sales)
+but it means **where you host this matters**:
+
+- **Local file, or a machine on your own network** — fine. This is the default.
+- **Public URL** (GitHub Pages, Netlify, Cloudflare Pages) — your token is then
+  world-readable, so anyone could insert junk sales into your data. Put it
+  behind access control, or keep the page off the public internet.
+
+The repo keeps `YOUR-POS-TOKEN` as the committed placeholder so the real token
+never lands in git history. Paste yours into your local copy only.
 
 ## 3. Android APK
 
