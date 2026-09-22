@@ -12,6 +12,6 @@
     "test": "node --test test/api.test.js"
   },
   "devDependencies": {
-    "wrangler": "4.113.0"
+    "wrangler": "4.136.3"
   }
 }

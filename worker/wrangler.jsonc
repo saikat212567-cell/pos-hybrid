@@ -1,10 +1,10 @@
 {
   "name": "pos-api",
   "main": "src/index.js",
-  // Newest date the installed workers runtime supports. Setting this ahead of
-  // the runtime (e.g. to today's date) makes `wrangler dev` refuse to start.
-  // Bump it together with the wrangler devDependency, not on its own.
-  "compatibility_date": "2026-07-28",
+  // Must not exceed what the installed workers runtime supports, or
+  // `wrangler dev` refuses to start. Bump this together with the wrangler
+  // devDependency, never on its own.
+  "compatibility_date": "2026-09-01",
   "observability": { "enabled": true },
 
   "d1_databases": [
