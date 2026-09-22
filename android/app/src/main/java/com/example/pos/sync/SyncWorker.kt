@@ -34,10 +34,14 @@ class SyncWorker(context: Context, params: WorkerParameters) :
                 if (PosApi.pushSale(sale)) dao.markSynced(sale.clientRef)
                 else deferred = true                        // 5xx: try again later
             } catch (e: PosApi.PermanentRejection) {
-                // Server will never accept this row. Mark it done so one bad
-                // sale cannot block every sale behind it, and log loudly.
-                Log.e(TAG, "dropping sale ${sale.clientRef}", e)
-                dao.markSynced(sale.clientRef)
+                // Server will never accept this row (bad token, rejected
+                // payload). Take it out of the retry loop so one bad sale
+                // can't block every sale behind it — but flag it rather than
+                // marking it synced. Marking it synced would disguise a lost
+                // sale as a completed one, so the money would silently vanish.
+                // MainActivity surfaces the failed count so it gets noticed.
+                Log.e(TAG, "sale rejected, needs attention: ${sale.clientRef}", e)
+                dao.markFailed(sale.clientRef)
             } catch (e: Exception) {
                 // Network died mid-drain. Stop; retry keeps the rest queued.
                 Log.w(TAG, "sync interrupted", e)

@@ -43,6 +43,13 @@ data class SaleEntity(
     val itemsJson: String,
     val soldAtMillis: Long,
     val synced: Boolean = false,
+    /**
+     * Set when the server rejected this sale in a way retrying can't fix
+     * (4xx). The row leaves the retry loop but is NOT marked synced — marking
+     * it synced would disguise a lost sale as a successful one, so real money
+     * would vanish with nothing to show it. Surfaced in the UI instead.
+     */
+    val failed: Boolean = false,
 )
 
 @Dao
@@ -63,16 +70,40 @@ interface PosDao {
     @Insert
     suspend fun queueSale(sale: SaleEntity)
 
-    @Query("SELECT * FROM sales WHERE synced = 0 ORDER BY soldAtMillis")
+    /** Sales still worth sending. Excludes ones the server permanently refused. */
+    @Query("SELECT * FROM sales WHERE synced = 0 AND failed = 0 ORDER BY soldAtMillis")
     suspend fun pendingSales(): List<SaleEntity>
 
-    @Query("SELECT COUNT(*) FROM sales WHERE synced = 0")
+    @Query("SELECT COUNT(*) FROM sales WHERE synced = 0 AND failed = 0")
     suspend fun pendingCount(): Int
+
+    /** Sales the server refused. These need a human to look at them. */
+    @Query("SELECT COUNT(*) FROM sales WHERE failed = 1")
+    suspend fun failedCount(): Int
+
+    @Query("SELECT * FROM sales WHERE failed = 1 ORDER BY soldAtMillis")
+    suspend fun failedSales(): List<SaleEntity>
 
     @Query("UPDATE sales SET synced = 1 WHERE clientRef = :ref")
     suspend fun markSynced(ref: String)
+
+    @Query("UPDATE sales SET failed = 1 WHERE clientRef = :ref")
+    suspend fun markFailed(ref: String)
+
+    /** Put failed sales back in the queue, e.g. after fixing a bad token. */
+    @Query("UPDATE sales SET failed = 0 WHERE failed = 1")
+    suspend fun retryFailed()
 }
 
+/**
+ * Still version 1: no APK has ever shipped, so no device has an older schema
+ * to migrate from.
+ *
+ * Once you've installed a build on a real device, any entity change needs a
+ * version bump plus a Migration. Do NOT reach for
+ * fallbackToDestructiveMigration() — it drops the table, and this one holds
+ * sales that haven't reached the server yet.
+ */
 @Database(entities = [ProductEntity::class, SaleEntity::class], version = 1)
 abstract class PosDb : RoomDatabase() {
     abstract fun dao(): PosDao

@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 
 // Defaults match `npm run dev:test`.
 const TOKEN = process.env.POS_TOKEN ?? 'test-token';
+const ADMIN = process.env.POS_ADMIN_TOKEN ?? 'admin-token-x';
 const BASE = process.env.POS_API ?? 'http://127.0.0.1:8801';
 
 // The server is started separately (see `npm test` in package.json) rather
@@ -114,4 +115,52 @@ test('rejects malformed json', async () => {
 
 test('unknown route is 404', async () => {
   assert.equal((await call('/nope')).status, 404);
+});
+
+// --- sales history, admin only -------------------------------------------
+// The till token is extractable from the APK and the web page's source. If it
+// could also read sales history, anyone with the APK could read your takings.
+
+test('till token cannot read sales history', async () => {
+  const res = await call('/sales');           // GET, till token
+  assert.equal(res.status, 401);
+});
+
+test('no token cannot read sales history', async () => {
+  assert.equal((await fetch(`${BASE}/sales`)).status, 401);
+});
+
+test('admin token reads sales history', async () => {
+  const res = await call('/sales', {}, ADMIN);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(Array.isArray(body.sales), 'expected a sales array');
+  assert.equal(typeof body.totalCents, 'number');
+  // items round-trips back to a real array, not the stored JSON string.
+  if (body.sales.length) assert.ok(Array.isArray(body.sales[0].items));
+});
+
+test('admin token also works on till routes', async () => {
+  // One token for everything while testing; the reverse must never hold.
+  assert.equal((await call('/products', {}, ADMIN)).status, 200);
+});
+
+test('a recorded sale shows up in history', async () => {
+  const s = sale({ total: 1234 });
+  await call('/sales', { method: 'POST', body: JSON.stringify(s) });
+
+  const { sales } = await (await call('/sales?limit=500', {}, ADMIN)).json();
+  const found = sales.find(r => r.client_ref === s.client_ref);
+  assert.ok(found, 'sale missing from history');
+  assert.equal(found.total, 1234);
+  assert.equal(found.source, 'web');
+});
+
+test('history limit is clamped, not rejected', async () => {
+  // Silly values shouldn't 400, but must not scan the whole table either.
+  for (const q of ['?limit=99999', '?limit=0', '?limit=abc', '?limit=-5']) {
+    const res = await call(`/sales${q}`, {}, ADMIN);
+    assert.equal(res.status, 200, `limit${q} should be clamped`);
+    assert.ok((await res.json()).sales.length <= 500);
+  }
 });

@@ -90,7 +90,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun show(list: List<ProductEntity>) = products.submit(list)
 
-    private fun status(text: String) { b.status.text = text }
+    /** Normal status line. Resets the colour in case a rejection turned it red. */
+    private fun status(text: String) {
+        b.status.text = text
+        b.status.setTextColor(getColor(android.R.color.darker_gray))
+    }
 
     // -----------------------------------------------------------------------
     // Cart
@@ -161,7 +165,7 @@ class MainActivity : AppCompatActivity() {
             renderCart()
 
             SyncWorker.enqueue(this@MainActivity)
-            status("Sale recorded — ${dao.pendingCount()} pending sync")
+            refreshSyncStatus()
             Toast.makeText(
                 this@MainActivity, "Paid ${formatMoney(total)}", Toast.LENGTH_SHORT
             ).show()
@@ -170,10 +174,24 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Sync may have completed while backgrounded; refresh the pending count.
-        lifecycleScope.launch {
-            val pending = dao.pendingCount()
-            if (pending > 0) status("$pending sales waiting to sync")
+        // Sync may have finished while backgrounded; refresh the counts.
+        lifecycleScope.launch { refreshSyncStatus() }
+    }
+
+    /**
+     * Rejected sales are the one thing here that needs a human, so they take
+     * priority over the pending count in the status line.
+     */
+    private suspend fun refreshSyncStatus() {
+        val failed = dao.failedCount()
+        val pending = dao.pendingCount()
+        when {
+            failed > 0 -> {
+                b.status.text = "$failed sale(s) REJECTED — not recorded on the server"
+                b.status.setTextColor(getColor(android.R.color.holo_red_dark))
+            }
+            pending > 0 -> status("$pending sale(s) waiting to sync")
+            else -> status("All sales synced")
         }
     }
 }

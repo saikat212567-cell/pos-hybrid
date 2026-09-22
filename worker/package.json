@@ -8,7 +8,7 @@
     "migrate:local": "wrangler d1 migrations apply pos --local",
     "migrate": "wrangler d1 migrations apply pos --remote",
     "//test": "Start the dev server first: npm run dev:test (in another shell)",
-    "dev:test": "wrangler dev --port 8801 --local --var POS_TOKEN:test-token",
+    "dev:test": "wrangler dev --port 8801 --local --var POS_TOKEN:test-token --var POS_ADMIN_TOKEN:admin-token-x",
     "test": "node --test test/api.test.js"
   },
   "devDependencies": {

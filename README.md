@@ -73,18 +73,36 @@ Products are cached locally on each successful fetch, and stock is decremented
 locally on sale, so an offline device shows a plausible catalog and stops
 selling what it has run out of.
 
+If the server refuses a sale outright (bad token, rejected payload — a 4xx that
+retrying can't fix), it leaves the retry queue so it can't block the sales
+behind it, but it is flagged `failed` rather than marked synced, and the status
+line turns red with a count. Marking it synced would disguise a lost sale as a
+completed one and the money would vanish with nothing to show for it. A red
+status line means those sales exist on the till and nowhere else.
+
 ## Money is integer cents
 
 Prices and totals are integers everywhere — D1, the API, both clients. Floats
 lose pennies once you sum them. Only display code divides by 100.
 
-## Security
+## Security: two tokens
 
-The bearer token is compiled into the APK and visible in the web page's source,
-so treat it as "keeps strangers out", not "stops a determined attacker". The
-API only exposes a product list and a sale insert — there's no endpoint to read
-historical sales — so a leaked token bounds to junk sales, not data theft.
-Rotate with `wrangler secret put POS_TOKEN` and rebuild both clients.
+`POS_TOKEN` is compiled into the APK and visible in the web page's source, so
+anyone holding either can extract it. It opens only what a till needs — list
+products, insert a sale. A leaked till token means junk sales in your data, not
+a breach.
+
+`POS_ADMIN_TOKEN` gates reading sales history and is **not** in either client.
+You pass it by hand when you want to see takings:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN" \
+  "https://pos-api.you.workers.dev/sales?since=$(date +%F)"
+```
+
+One token for both would mean extracting the APK exposes your whole revenue
+history. Rotate either with `wrangler secret put`, and rebuild the clients if
+you change the till token.
 
 ## Backups
 
@@ -102,7 +120,7 @@ has no point-in-time recovery.
 - **Atomic server-side stock.** Stock decrements happen in the same D1
   transaction as the sale, but two offline devices can still oversell the same
   item since neither sees the other until sync.
-- **Refunds, receipt printing, reporting.** Query D1 directly for now:
-  `npx wrangler d1 execute pos --remote --command="SELECT * FROM sales"`.
+- **Refunds and receipt printing.** No support yet. Sales history is readable
+  via `GET /sales` with the admin token, but there's no UI for it.
 - **Release signing.** Builds produce a debug APK. Add a keystore to Codemagic
   and switch to `assembleRelease` when you distribute.

@@ -2,17 +2,25 @@
  * POS API on Cloudflare Workers + D1.
  *
  * Endpoints:
- *   GET  /products  -> catalog
- *   POST /sales     -> record a sale (idempotent on client_ref)
+ *   GET  /products  -> catalog                    (POS_TOKEN)
+ *   POST /sales     -> record a sale, idempotent  (POS_TOKEN)
+ *   GET  /sales     -> recent sales history       (POS_ADMIN_TOKEN)
  *
  * Money is integer cents everywhere. The clients convert for display only.
  *
- * AUTH: every request needs `Authorization: Bearer <POS_TOKEN>`. This is a
- * shared secret, set with `wrangler secret put POS_TOKEN`. It ships inside the
- * APK and the web page, so treat it as "keeps strangers out", not "keeps a
- * determined attacker out" — it's a write-only sales endpoint with no reads of
- * historical data, so the blast radius of a leaked token is bounded to junk
- * sales. Rotate it by setting a new secret and rebuilding the clients.
+ * TWO TOKENS, deliberately:
+ *
+ *   POS_TOKEN is compiled into the APK and visible in the web page's source.
+ *   Anyone who has either can extract it, so it only gates the two endpoints a
+ *   till needs: list products, insert a sale. Worst case with a leaked
+ *   POS_TOKEN is junk sales in your data — annoying, not a breach.
+ *
+ *   POS_ADMIN_TOKEN gates reading sales history, and is deliberately NOT
+ *   shipped in either client. You type it when you want to look at takings.
+ *   If both tokens were one, extracting the APK would expose your entire
+ *   revenue history.
+ *
+ * Set both with `wrangler secret put`, and rotate by setting a new value.
  */
 
 const json = (body, status = 200, extra = {}) =>
@@ -46,17 +54,28 @@ export default {
 
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors() });
 
-    if (!tokenOk(request.headers.get('Authorization'), env.POS_TOKEN)) {
-      return json({ error: 'unauthorized' }, 401);
-    }
+    const auth = request.headers.get('Authorization');
+    // Admin token also works on till routes, so you can use one token for
+    // everything when testing. The reverse is never true.
+    const till = tokenOk(auth, env.POS_TOKEN) || tokenOk(auth, env.POS_ADMIN_TOKEN);
+    const admin = tokenOk(auth, env.POS_ADMIN_TOKEN);
 
     try {
       if (url.pathname === '/products' && request.method === 'GET') {
+        if (!till) return json({ error: 'unauthorized' }, 401);
         return await listProducts(env);
       }
       if (url.pathname === '/sales' && request.method === 'POST') {
+        if (!till) return json({ error: 'unauthorized' }, 401);
         return await recordSale(request, env);
       }
+      if (url.pathname === '/sales' && request.method === 'GET') {
+        // Reading revenue history needs the admin token, which is not in any
+        // shipped client.
+        if (!admin) return json({ error: 'unauthorized' }, 401);
+        return await listSales(url, env);
+      }
+      if (!till) return json({ error: 'unauthorized' }, 401);
       return json({ error: 'not found' }, 404);
     } catch (err) {
       // Log for `wrangler tail`; don't leak internals to the client.
@@ -71,6 +90,39 @@ async function listProducts(env) {
     .prepare('SELECT id, name, price, stock FROM products ORDER BY name')
     .all();
   return json(results);
+}
+
+/**
+ * Recent sales, newest first. Admin only.
+ *
+ * ?limit=N     how many rows (1-500, default 50)
+ * ?since=DATE  only sales at/after this ISO date, e.g. 2026-09-01
+ */
+async function listSales(url, env) {
+  // Clamp rather than reject: a silly limit shouldn't 400, and an unbounded
+  // one would scan the whole table.
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') ?? '50', 10) || 50, 1), 500);
+  const since = url.searchParams.get('since');
+
+  const { results } = since
+    ? await env.DB.prepare(
+        'SELECT client_ref, source, total, items, sold_at FROM sales ' +
+        'WHERE sold_at >= ? ORDER BY sold_at DESC LIMIT ?'
+      ).bind(since, limit).all()
+    : await env.DB.prepare(
+        'SELECT client_ref, source, total, items, sold_at FROM sales ' +
+        'ORDER BY sold_at DESC LIMIT ?'
+      ).bind(limit).all();
+
+  // items is stored as a JSON string; parse so callers get real arrays.
+  const sales = results.map(r => ({ ...r, items: JSON.parse(r.items) }));
+
+  return json({
+    sales,
+    count: sales.length,
+    // Convenience: what these rows add up to, so a caller doesn't have to.
+    totalCents: sales.reduce((s, r) => s + r.total, 0),
+  });
 }
 
 async function recordSale(request, env) {
