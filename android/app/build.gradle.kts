@@ -15,12 +15,12 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        // Credentials injected from gradle properties / CI secrets, never
-        // hardcoded in source. Read at runtime as BuildConfig.SUPABASE_URL.
-        buildConfigField("String", "SUPABASE_URL",
-            "\"${project.findProperty("supabaseUrl") ?: ""}\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY",
-            "\"${project.findProperty("supabaseAnonKey") ?: ""}\"")
+        // Injected from gradle properties / CI secrets, never hardcoded in
+        // source. Read at runtime as BuildConfig.API_BASE / API_TOKEN.
+        buildConfigField("String", "API_BASE",
+            "\"${project.findProperty("apiBase") ?: ""}\"")
+        buildConfigField("String", "API_TOKEN",
+            "\"${project.findProperty("apiToken") ?: ""}\"")
     }
 
     buildFeatures {

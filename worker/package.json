@@ -1,0 +1,17 @@
+{
+  "name": "pos-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply pos --local",
+    "migrate": "wrangler d1 migrations apply pos --remote",
+    "//test": "Start the dev server first: npm run dev:test (in another shell)",
+    "dev:test": "wrangler dev --port 8801 --local --var POS_TOKEN:test-token",
+    "test": "node --test test/api.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "4.113.0"
+  }
+}

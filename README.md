@@ -1,101 +1,108 @@
 # Hybrid POS — Web + Android
 
-Shared Supabase backend, two clients. Nothing compiles on your PC: the web app
-is a single HTML file you open in a browser, the APK is built by Codemagic.
+Cloudflare Workers + D1 backend, two clients. Nothing compiles on your PC: the
+web app is a single HTML file you open in a browser, the APK is built by
+Codemagic.
 
 ```
-supabase/schema.sql      tables, RLS policies, seed products
+worker/                  API + D1 database (deploy this first)
 web/index.html           the entire web terminal
 android/                 Gradle project for the APK
 codemagic.yaml           cloud APK build + GitHub Release publishing
 ```
 
-## 1. Supabase
+## 1. Backend
 
-1. Create a project at supabase.com (free tier is fine).
-2. SQL Editor → paste `supabase/schema.sql` → Run.
-3. Settings → API → copy the **Project URL** and the **anon public** key.
-
-The anon key is public — it ships inside the web page and inside the APK, so
-anyone can read it out. The RLS policies in the schema are the actual security
-boundary: with the anon key you can read products and insert a sale, nothing
-else. Don't put the `service_role` key in either client.
+Follow [worker/README.md](worker/README.md). Five commands and you have a URL
+plus a token — that's all both clients need.
 
 ## 2. Web app
 
 Edit the two constants at the top of the `<script>` block in
-`web/index.html`:
+[web/index.html](web/index.html):
 
 ```js
-const SUPABASE_URL = 'https://your-project.supabase.co';
-const SUPABASE_ANON_KEY = 'your-anon-key';
+const API_BASE = 'https://pos-api.your-subdomain.workers.dev';
+const API_TOKEN = 'the-token-you-set';
 ```
 
-Then open the file. No server, no build. To host it: drop it on GitHub Pages,
-Netlify drop, or Cloudflare Pages — it's one static file.
+Then open the file. No server, no build. To host it: GitHub Pages, Netlify
+drop, or Cloudflare Pages — it's one static file.
 
-Before you fill in the keys it runs on a demo catalog so you can click through
-the UI.
+Before you fill these in it runs on a demo catalog so you can click through the
+UI.
 
 ## 3. Android APK
 
-Built on Codemagic, delivered through GitHub Releases. Config is in
-`codemagic.yaml`; the one-time UI setup is listed in the comment at the top of
-that file.
-
-Short version:
+Built on Codemagic, delivered through GitHub Releases. Setup steps are in the
+comment at the top of [codemagic.yaml](codemagic.yaml). Short version:
 
 1. codemagic.io → sign up with GitHub → add `pos-hybrid` as an Android app.
-2. Create two environment variable groups: `supabase` (`SUPABASE_URL`,
-   `SUPABASE_ANON_KEY`) and `github` (`GH_TOKEN` with `repo` scope). Mark all
-   three Secure.
-3. Push to `main` → it builds and emails you the APK.
-4. Tag a release → it builds and publishes the APK to GitHub Releases:
+2. Create two variable groups: `posapi` (`API_BASE`, `API_TOKEN`) and `github`
+   (`GH_TOKEN` with `repo` scope). Mark all three Secure.
+3. Push to `main` → builds and emails you the APK.
+4. Tag a release → builds and publishes to GitHub Releases:
 
 ```bash
 git tag v1.0 && git push origin v1.0
 ```
 
-Then open the release page on the phone and install the `.apk` directly.
-
-Unit tests run before the APK is assembled, so a broken build fails early.
-
-Why not GitHub Actions: the original workflow worked, but this account's
-Actions artifact storage is full (~1.6 GB of old APK builds in another repo),
-so artifact uploads fail. Release assets don't count against that quota. The
-old workflow is still in git history at the first commit if you want it back.
+Open that release page on the phone and install the `.apk` directly.
 
 To build locally instead (needs JDK 17 + Android SDK):
 
 ```bash
 cd android
-gradle assembleDebug -PsupabaseUrl=... -PsupabaseAnonKey=...
+gradle assembleDebug -PapiBase=https://... -PapiToken=...
 ```
 
 ## How offline works
 
 Every sale on Android is written to Room first, then a WorkManager job with a
 `NetworkType.CONNECTED` constraint is enqueued. The UI never waits on the
-network, so charging is instant whether or not there's signal.
+network, so charging is instant whether or not there's signal. The job runs
+when connectivity returns and survives app kill and reboot — which is why
+there's no connectivity listener or retry timer in the code.
 
-Each sale carries a device-generated `client_ref` UUID, and `sales.client_ref`
-is `unique` in Postgres. If an upload succeeds but the response is lost, the
-retry hits a 409 and the worker treats that as success — so a flaky connection
-can't produce a double-charge. That constraint is the entire correctness
-argument for the sync path; don't drop it.
+Each sale carries a device-generated `client_ref` UUID, and that column is the
+PRIMARY KEY server-side. If an upload succeeds but the response is lost, the
+retry collides and the API reports `duplicate: true`, which the sync worker
+treats as success. A flaky connection cannot produce a double charge.
 
 Products are cached locally on each successful fetch, and stock is decremented
 locally on sale, so an offline device shows a plausible catalog and stops
-selling items it has run out of.
+selling what it has run out of.
+
+## Money is integer cents
+
+Prices and totals are integers everywhere — D1, the API, both clients. Floats
+lose pennies once you sum them. Only display code divides by 100.
+
+## Security
+
+The bearer token is compiled into the APK and visible in the web page's source,
+so treat it as "keeps strangers out", not "stops a determined attacker". The
+API only exposes a product list and a sale insert — there's no endpoint to read
+historical sales — so a leaked token bounds to junk sales, not data theft.
+Rotate with `wrangler secret put POS_TOKEN` and rebuild both clients.
+
+## Backups
+
+D1's free tier includes 7-day point-in-time restore (Time Travel). For longer
+retention, `wrangler d1 export` on a schedule. Commands in
+[worker/README.md](worker/README.md).
+
+This is the main reason the backend is D1 rather than Supabase, whose free tier
+has no point-in-time recovery.
 
 ## What's not here
 
-- **Auth.** Every device is anonymous. Add Supabase Auth when you need
-  per-cashier attribution or want to lock sales reads down by user.
-- **Server-side stock.** Local decrements are advisory; two offline devices can
-  oversell the same item. Add a Postgres trigger or an RPC that decrements
-  atomically on insert when that starts to matter.
-- **Receipt printing, refunds, reporting.** Query the `sales` table from the
-  Supabase dashboard for now.
-- **Release signing.** The workflow produces a debug APK. Add a keystore secret
-  and `assembleRelease` when you're ready to distribute.
+- **Auth.** Every device shares one token; sales aren't attributed to a
+  cashier. Add per-device tokens when you need that.
+- **Atomic server-side stock.** Stock decrements happen in the same D1
+  transaction as the sale, but two offline devices can still oversell the same
+  item since neither sees the other until sync.
+- **Refunds, receipt printing, reporting.** Query D1 directly for now:
+  `npx wrangler d1 execute pos --remote --command="SELECT * FROM sales"`.
+- **Release signing.** Builds produce a debug APK. Add a keystore to Codemagic
+  and switch to `assembleRelease` when you distribute.

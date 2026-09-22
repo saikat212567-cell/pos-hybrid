@@ -12,18 +12,20 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
- * Thin wrapper over the Supabase REST (PostgREST) endpoints we actually use.
- * No SDK: two calls do not justify a dependency.
+ * Client for the POS Worker API (Cloudflare Workers + D1).
  *
- * The anon key is public — it ships in the APK and anyone can extract it.
- * Row Level Security in supabase/schema.sql is what protects the data.
+ * Two endpoints, so no SDK and no JSON library: org.json ships with Android.
+ *
+ * The bearer token is compiled into the APK and can be extracted from it, so
+ * it only keeps strangers out of a write-only sales endpoint. Rotate it by
+ * setting a new Worker secret and rebuilding.
  */
-object Supabase {
+object PosApi {
 
-    private val URL = BuildConfig.SUPABASE_URL.trimEnd('/')
-    private val KEY = BuildConfig.SUPABASE_ANON_KEY
+    private val BASE = BuildConfig.API_BASE.trimEnd('/')
+    private val TOKEN = BuildConfig.API_TOKEN
 
-    val configured: Boolean get() = URL.isNotBlank() && KEY.isNotBlank()
+    val configured: Boolean get() = BASE.isNotBlank() && TOKEN.isNotBlank()
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -32,16 +34,11 @@ object Supabase {
 
     private val JSON = "application/json".toMediaType()
 
-    private fun Request.Builder.auth() = this
-        .header("apikey", KEY)
-        .header("Authorization", "Bearer $KEY")
+    private fun Request.Builder.auth() = header("Authorization", "Bearer $TOKEN")
 
     /** Pull the catalog for local caching. Throws on network/HTTP failure. */
     fun fetchProducts(): List<ProductEntity> {
-        val req = Request.Builder()
-            .url("$URL/rest/v1/products?select=id,name,price,stock&order=name")
-            .auth()
-            .build()
+        val req = Request.Builder().url("$BASE/products").auth().build()
 
         http.newCall(req).execute().use { res ->
             val body = res.body?.string().orEmpty()
@@ -53,9 +50,7 @@ object Supabase {
                 ProductEntity(
                     id = o.getString("id"),
                     name = o.getString("name"),
-                    // numeric comes back as a JSON string sometimes; getDouble
-                    // handles both string and number forms.
-                    price = o.getDouble("price"),
+                    priceCents = o.getInt("price"),
                     stock = o.getInt("stock"),
                 )
             }
@@ -65,38 +60,36 @@ object Supabase {
     /**
      * Push one queued sale.
      *
-     * @return true if the sale is now stored server-side — including the 409
-     *   duplicate case, which means a previous attempt actually succeeded and
-     *   only its response was lost. Either way the local row is done.
-     *   Returns false for anything retryable (network down, 5xx).
+     * @return true if the sale is stored server-side. That includes the
+     *   duplicate case: the API returns 200 with `duplicate: true` when this
+     *   client_ref already exists, which means an earlier attempt succeeded
+     *   and only its response was lost. Either way the local row is done.
+     *   Returns false for anything worth retrying (network down, 5xx).
+     * @throws PermanentRejection for 4xx, which retrying will never fix.
      */
     fun pushSale(sale: SaleEntity): Boolean {
         val payload = JSONObject()
             .put("client_ref", sale.clientRef)
             .put("source", "android")
-            .put("total", sale.total)
+            .put("total", sale.totalCents)
             .put("items", JSONArray(sale.itemsJson))
             .toString()
 
         val req = Request.Builder()
-            .url("$URL/rest/v1/sales")
+            .url("$BASE/sales")
             .auth()
             .header("Content-Type", "application/json")
-            .header("Prefer", "return=minimal")
             .post(payload.toRequestBody(JSON))
             .build()
 
         return http.newCall(req).execute().use { res ->
             when {
-                res.isSuccessful -> true
-                res.code == 409 -> true                 // already there, idempotent
-                res.code in 400..499 -> {
-                    // Malformed or rejected by RLS. Retrying forever will not
-                    // fix it; surface it and let the worker drop it from the
-                    // retry loop rather than blocking the whole queue.
+                res.isSuccessful -> true                 // 201 new, or 200 duplicate
+                res.code in 400..499 ->
+                    // Rejected payload or bad token. Retrying forever won't
+                    // fix it and would block every sale behind it.
                     throw PermanentRejection("sale ${res.code}: ${res.body?.string()}")
-                }
-                else -> false                           // 5xx -> retry later
+                else -> false                            // 5xx -> retry later
             }
         }
     }

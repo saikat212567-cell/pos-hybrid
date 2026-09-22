@@ -5,11 +5,11 @@
 #   1. codemagic.io -> sign up with GitHub -> authorize access to pos-hybrid.
 #   2. Add application -> pick saikat212567-cell/pos-hybrid -> "Android app".
 #   3. It detects this file automatically. Pick the `android-debug` workflow.
-#   4. Environment variables -> create group `supabase` with:
-#        SUPABASE_URL        = https://your-project.supabase.co
-#        SUPABASE_ANON_KEY   = your-anon-key
+#   4. Environment variables -> create group `posapi` with:
+#        API_BASE  = https://pos-api.your-subdomain.workers.dev
+#        API_TOKEN = the value you set with `wrangler secret put POS_TOKEN`
 #   5. Create group `github` with:
-#        GH_TOKEN            = a GitHub token with `repo` scope
+#        GH_TOKEN  = a GitHub token with `repo` scope
 #      (github.com/settings/tokens -> fine-grained -> Contents: read+write
 #       on saikat212567-cell/pos-hybrid)
 #      Tick "Secure" on all three so they're masked in build logs.
@@ -33,7 +33,7 @@ workflows:
       # Until you create it in the UI the build still succeeds — it just
       # produces an APK that can't reach Supabase (see the guard below).
       groups:
-        - supabase
+        - posapi      # API_BASE, API_TOKEN
         - github      # GH_TOKEN, for publishing releases
 
     # Speeds up later builds; first run populates it.
@@ -56,16 +56,16 @@ workflows:
       cancel_previous_builds: true
 
     scripts:
-      - name: Warn if Supabase credentials are missing
+      - name: Warn if API credentials are missing
         script: |
           # Not a hard failure: a credential-less APK is still useful for
           # checking the UI. But it would silently never sync, so say so.
-          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-            echo "WARNING: SUPABASE_URL / SUPABASE_ANON_KEY are not set."
-            echo "The APK will build but cannot reach Supabase."
-            echo "Set them in the 'supabase' variable group in the Codemagic UI."
+          if [ -z "$API_BASE" ] || [ -z "$API_TOKEN" ]; then
+            echo "WARNING: API_BASE / API_TOKEN are not set."
+            echo "The APK will build but cannot reach the POS API."
+            echo "Set them in the 'posapi' variable group in the Codemagic UI."
           else
-            echo "Supabase credentials present."
+            echo "API credentials present."
           fi
 
       - name: Unit tests
@@ -78,8 +78,8 @@ workflows:
         working_directory: android
         script: |
           gradle assembleDebug \
-            -PsupabaseUrl="$SUPABASE_URL" \
-            -PsupabaseAnonKey="$SUPABASE_ANON_KEY"
+            -PapiBase="$API_BASE" \
+            -PapiToken="$API_TOKEN"
 
       - name: Publish to GitHub Releases (tag builds only)
         script: |

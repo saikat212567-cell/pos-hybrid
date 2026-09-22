@@ -64,20 +64,32 @@
 
 <script type="module">
 // ===========================================================================
-// CONFIG — replace with your own project values (Supabase -> Settings -> API).
-// The anon key is public by design; RLS in supabase/schema.sql is what
-// actually protects the data.
+// CONFIG — point these at your deployed Worker (see worker/README.md).
+//
+// API_TOKEN is the shared secret you set with `wrangler secret put POS_TOKEN`.
+// It's visible to anyone who views source, so it only keeps strangers out of
+// a write-only sales endpoint. Rotate it by setting a new secret and editing
+// this file.
 // ===========================================================================
-const SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR-ANON-KEY';
+const API_BASE = 'https://pos-api.YOUR-SUBDOMAIN.workers.dev';
+const API_TOKEN = 'YOUR-POS-TOKEN';
 const TAX_RATE = 0.05;
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
 const $ = id => document.getElementById(id);
-const money = n => n.toFixed(2);
+
+// Money is integer cents end to end; only formatting divides by 100. Floats
+// accumulate error once you start summing them, and this sums every line.
+const money = cents => (cents / 100).toFixed(2);
+
+const api = (path, opts = {}) =>
+  fetch(API_BASE + path, {
+    ...opts,
+    headers: {
+      Authorization: `Bearer ${API_TOKEN}`,
+      'Content-Type': 'application/json',
+      ...opts.headers,
+    },
+  });
 
 // Product names come from the database, and both grid and cart render via
 // innerHTML. Escape before interpolating so a name containing markup can't
@@ -85,12 +97,13 @@ const money = n => n.toFixed(2);
 const esc = s => String(s).replace(/[&<>"']/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-// Fallback catalog so the terminal is still usable before Supabase is wired up.
+// Fallback catalog so the terminal is usable before the Worker is deployed.
+// Prices in cents, matching the API.
 const DEMO = [
-  { id: 'demo-1', name: 'Espresso',   price: 2.50, stock: 100 },
-  { id: 'demo-2', name: 'Cappuccino', price: 3.75, stock: 100 },
-  { id: 'demo-3', name: 'Croissant',  price: 2.95, stock: 40  },
-  { id: 'demo-4', name: 'Veg Wrap',   price: 6.00, stock: 20  },
+  { id: 'demo-1', name: 'Espresso',   price: 250, stock: 100 },
+  { id: 'demo-2', name: 'Cappuccino', price: 375, stock: 100 },
+  { id: 'demo-3', name: 'Croissant',  price: 295, stock: 40  },
+  { id: 'demo-4', name: 'Veg Wrap',   price: 600, stock: 20  },
 ];
 
 let products = [];
@@ -100,20 +113,16 @@ const cart = new Map();   // product id -> { ...product, qty }
 // Catalog
 // ---------------------------------------------------------------------------
 async function loadProducts() {
-  const { data, error } = await db
-    .from('products')
-    .select('id,name,price,stock')
-    .order('name');
-
-  if (error) {
-    products = DEMO;
-    $('status').textContent = 'Offline — demo catalog';
-    $('status').className = 'text-sm text-amber-600';
-  } else {
-    // Postgres numeric arrives as a string; coerce before any arithmetic.
-    products = data.map(p => ({ ...p, price: Number(p.price) }));
+  try {
+    const res = await api('/products');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    products = await res.json();
     $('status').textContent = `Connected — ${products.length} products`;
     $('status').className = 'text-sm text-emerald-600';
+  } catch (err) {
+    products = DEMO;
+    $('status').textContent = `Offline — demo catalog (${err.message})`;
+    $('status').className = 'text-sm text-amber-600';
   }
   renderGrid();
 }
@@ -154,6 +163,13 @@ function setQty(id, qty) {
   renderCart();
 }
 
+const subtotalCents = () =>
+  [...cart.values()].reduce((s, l) => s + l.price * l.qty, 0);
+
+/** Tax applied to the whole subtotal, rounded to cents once. Rounding each
+ *  line and summing gives a total that doesn't match the printed lines. */
+const totalCents = () => Math.round(subtotalCents() * (1 + TAX_RATE));
+
 function renderCart() {
   $('cart').innerHTML = [...cart.values()].map(l => `
     <li class="flex items-center gap-2 py-2">
@@ -166,32 +182,43 @@ function renderCart() {
       <span class="w-14 text-right tabular-nums">${money(l.price * l.qty)}</span>
     </li>`).join('') || '<li class="py-2 text-sm text-slate-500">Empty</li>';
 
-  const subtotal = [...cart.values()].reduce((s, l) => s + l.price * l.qty, 0);
-  const tax = subtotal * TAX_RATE;
+  const subtotal = subtotalCents();
+  const total = totalCents();
   $('subtotal').textContent = money(subtotal);
-  $('tax').textContent = money(tax);
-  $('total').textContent = money(subtotal + tax);
+  // Derived so subtotal + tax always equals the total shown, with no
+  // off-by-a-cent from rounding the two independently.
+  $('tax').textContent = money(total - subtotal);
+  $('total').textContent = money(total);
   $('taxpct').textContent = TAX_RATE * 100;
   $('checkout').disabled = cart.size === 0;
 }
 
 // ---------------------------------------------------------------------------
-// Checkout — logs the sale to Supabase. client_ref makes a retry idempotent.
+// Checkout. client_ref makes a retry idempotent server-side, so a lost
+// response can't become a double charge.
 // ---------------------------------------------------------------------------
 async function checkout() {
   const items = [...cart.values()].map(({ id, name, price, qty }) => ({ id, name, price, qty }));
-  const subtotal = items.reduce((s, l) => s + l.price * l.qty, 0);
-  const total = Number((subtotal * (1 + TAX_RATE)).toFixed(2));
+  const total = totalCents();
 
   $('checkout').disabled = true;
   $('receipt').textContent = 'Charging…';
 
-  const { error } = await db.from('sales').insert({
-    client_ref: crypto.randomUUID(),
-    source: 'web',
-    total,
-    items,
-  });
+  let error = null;
+  try {
+    const res = await api('/sales', {
+      method: 'POST',
+      body: JSON.stringify({
+        client_ref: crypto.randomUUID(),
+        source: 'web',
+        total,
+        items,
+      }),
+    });
+    if (!res.ok) error = { message: `HTTP ${res.status} ${await res.text()}` };
+  } catch (err) {
+    error = { message: err.message };
+  }
 
   if (error) {
     $('receipt').textContent = `Not logged: ${error.message}`;

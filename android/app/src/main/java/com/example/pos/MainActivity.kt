@@ -10,12 +10,13 @@ import com.example.pos.data.PosDb
 import com.example.pos.data.ProductEntity
 import com.example.pos.data.SaleEntity
 import com.example.pos.databinding.ActivityMainBinding
-import com.example.pos.net.Supabase
+import com.example.pos.net.PosApi
 import com.example.pos.sync.SyncWorker
 import com.example.pos.ui.CartAdapter
 import com.example.pos.ui.CartLine
 import com.example.pos.ui.ProductAdapter
-import com.example.pos.ui.cartTotal
+import com.example.pos.ui.formatMoney
+import com.example.pos.ui.totalCents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -66,18 +67,18 @@ class MainActivity : AppCompatActivity() {
 
     // -----------------------------------------------------------------------
     // Catalog: local cache first so the screen is usable immediately, then a
-    // refresh from Supabase if the network happens to be up.
+    // refresh from the API if the network happens to be up.
     // -----------------------------------------------------------------------
     private fun loadCatalog() = lifecycleScope.launch {
         show(dao.products())
 
-        if (!Supabase.configured) {
-            status("Supabase not configured — local catalog only")
+        if (!PosApi.configured) {
+            status("API not configured — local catalog only")
             return@launch
         }
 
         try {
-            val fresh = withContext(Dispatchers.IO) { Supabase.fetchProducts() }
+            val fresh = withContext(Dispatchers.IO) { PosApi.fetchProducts() }
             dao.upsertProducts(fresh)
             show(fresh)
             status("Synced — ${fresh.size} products")
@@ -115,12 +116,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderCart() {
         cartView.submit(cart.values.toList())
-        b.total.text = "Total  %.2f".format(total())
+        b.total.text = "Total  ${formatMoney(total())}"
         b.charge.isEnabled = cart.isNotEmpty()
     }
 
     /** Delegates to the tested top-level function in ui/Totals.kt. */
-    private fun total(): Double = cartTotal(cart.values, taxRate)
+    private fun total(): Int = totalCents(cart.values, taxRate)
 
     // -----------------------------------------------------------------------
     // Checkout
@@ -135,7 +136,7 @@ class MainActivity : AppCompatActivity() {
                     JSONObject()
                         .put("id", l.product.id)
                         .put("name", l.product.name)
-                        .put("price", l.product.price)
+                        .put("price", l.product.priceCents)
                         .put("qty", l.qty)
                 )
             }
@@ -148,7 +149,7 @@ class MainActivity : AppCompatActivity() {
             dao.queueSale(
                 SaleEntity(
                     clientRef = UUID.randomUUID().toString(),
-                    total = total,
+                    totalCents = total,
                     itemsJson = items,
                     soldAtMillis = System.currentTimeMillis(),
                 )
@@ -161,7 +162,9 @@ class MainActivity : AppCompatActivity() {
 
             SyncWorker.enqueue(this@MainActivity)
             status("Sale recorded — ${dao.pendingCount()} pending sync")
-            Toast.makeText(this@MainActivity, "Paid %.2f".format(total), Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this@MainActivity, "Paid ${formatMoney(total)}", Toast.LENGTH_SHORT
+            ).show()
         }
     }
 

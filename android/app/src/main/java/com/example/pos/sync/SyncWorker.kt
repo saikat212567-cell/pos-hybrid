@@ -10,10 +10,10 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.pos.data.PosDb
-import com.example.pos.net.Supabase
+import com.example.pos.net.PosApi
 
 /**
- * Drains the offline sale queue to Supabase.
+ * Drains the offline sale queue to the POS API.
  *
  * WorkManager is doing the hard part: the NetworkType.CONNECTED constraint
  * means the OS starts this worker when connectivity comes back, and the work
@@ -24,16 +24,16 @@ class SyncWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        if (!Supabase.configured) return Result.success()   // nothing to sync to
+        if (!PosApi.configured) return Result.success()   // nothing to sync to
 
         val dao = PosDb.get(applicationContext).dao()
         var deferred = false
 
         for (sale in dao.pendingSales()) {
             try {
-                if (Supabase.pushSale(sale)) dao.markSynced(sale.clientRef)
+                if (PosApi.pushSale(sale)) dao.markSynced(sale.clientRef)
                 else deferred = true                        // 5xx: try again later
-            } catch (e: Supabase.PermanentRejection) {
+            } catch (e: PosApi.PermanentRejection) {
                 // Server will never accept this row. Mark it done so one bad
                 // sale cannot block every sale behind it, and log loudly.
                 Log.e(TAG, "dropping sale ${sale.clientRef}", e)

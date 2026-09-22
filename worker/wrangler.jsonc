@@ -1,0 +1,18 @@
+{
+  "name": "pos-api",
+  "main": "src/index.js",
+  // Newest date the installed workers runtime supports. Setting this ahead of
+  // the runtime (e.g. to today's date) makes `wrangler dev` refuse to start.
+  // Bump it together with the wrangler devDependency, not on its own.
+  "compatibility_date": "2026-07-28",
+  "observability": { "enabled": true },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pos",
+      // Filled in by `wrangler d1 create pos` — see worker/README.md
+      "database_id": "PLACEHOLDER_RUN_D1_CREATE"
+    }
+  ]
+}

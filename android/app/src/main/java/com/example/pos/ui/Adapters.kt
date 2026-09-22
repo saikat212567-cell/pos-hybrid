@@ -35,11 +35,12 @@ class ProductAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val p = items[position]
         holder.b.name.text = p.name
-        holder.b.price.text = "%.2f".format(p.price)
+        holder.b.price.text = formatMoney(p.priceCents)
         holder.b.stock.text = "${p.stock} left"
         holder.b.root.isEnabled = p.stock > 0
         holder.b.root.alpha = if (p.stock > 0) 1f else 0.4f
-        holder.b.root.contentDescription = "${p.name}, ${"%.2f".format(p.price)}, add to cart"
+        holder.b.root.contentDescription =
+            "${p.name}, ${formatMoney(p.priceCents)}, add to cart"
         holder.b.root.setOnClickListener { if (p.stock > 0) onTap(p) }
     }
 }
@@ -66,7 +67,7 @@ class CartAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val l = lines[position]
         holder.b.line.text =
-            "${l.product.name}  ×${l.qty}   ${"%.2f".format(l.product.price * l.qty)}"
+            "${l.product.name}  ×${l.qty}   ${formatMoney(l.product.priceCents * l.qty)}"
         holder.b.plus.setOnClickListener { onQtyChange(l, l.qty + 1) }
         holder.b.minus.setOnClickListener { onQtyChange(l, l.qty - 1) }
     }

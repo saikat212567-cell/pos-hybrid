@@ -13,7 +13,7 @@ import androidx.room.RoomDatabase
 /**
  * Local storage. Two tables:
  *
- *  - [ProductEntity]: a cache of the Supabase catalog so the terminal opens
+ *  - [ProductEntity]: a cache of the server catalog so the terminal opens
  *    and sells with no network at all.
  *  - [SaleEntity]: the offline queue. Every sale lands here first, always,
  *    even when online. The sync worker is the only thing that talks to the
@@ -24,7 +24,9 @@ import androidx.room.RoomDatabase
 data class ProductEntity(
     @PrimaryKey val id: String,
     val name: String,
-    val price: Double,
+    /** Money in integer cents, matching the API. Doubles lose pennies once
+     *  you sum them, and a POS sums every line of every sale. */
+    val priceCents: Int,
     val stock: Int,
 )
 
@@ -34,7 +36,8 @@ data class SaleEntity(
      *  unique index turns a retried upload into a no-op instead of a
      *  duplicate sale. This is the whole offline-safety story. */
     @PrimaryKey val clientRef: String,
-    val total: Double,
+    /** Money in integer cents, matching the API. */
+    val totalCents: Int,
     /** Line items as a JSON array string: [{"id","name","price","qty"}].
      *  Stored pre-serialized so the worker can forward it untouched. */
     val itemsJson: String,
