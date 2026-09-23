@@ -32,10 +32,10 @@ class SyncWorker(context: Context, params: WorkerParameters) :
         for (sale in dao.pendingSales()) {
             try {
                 if (PosApi.pushSale(sale)) dao.markSynced(sale.clientRef)
-                else deferred = true                        // 5xx: try again later
+                else deferred = true            // transient response: try again later
             } catch (e: PosApi.PermanentRejection) {
-                // Server will never accept this row (bad token, rejected
-                // payload). Take it out of the retry loop so one bad sale
+                // Server will never accept this row (bad token/payload or stock
+                // genuinely gone). Take it out of the retry loop so one bad sale
                 // can't block every sale behind it — but flag it rather than
                 // marking it synced. Marking it synced would disguise a lost
                 // sale as a completed one, so the money would silently vanish.

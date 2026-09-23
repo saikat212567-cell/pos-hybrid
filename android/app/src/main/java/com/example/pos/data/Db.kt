@@ -66,8 +66,8 @@ data class SaleEntity(
     val soldAtMillis: Long,
     val synced: Boolean = false,
     /**
-     * Set when the server rejected this sale in a way retrying can't fix
-     * (4xx). The row leaves the retry loop but is NOT marked synced — marking
+     * Set when the server rejected this sale in a way retrying can't fix.
+     * The row leaves the retry loop but is NOT marked synced — marking
      * it synced would disguise a lost sale as a successful one, so real money
      * would vanish with nothing to show it. Surfaced in the UI instead.
      */

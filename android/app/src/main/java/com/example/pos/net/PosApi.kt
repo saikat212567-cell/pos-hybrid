@@ -153,12 +153,17 @@ object PosApi {
     /**
      * Push one queued sale.
      *
-     * @return true if the sale is stored server-side. That includes the
-     *   duplicate case: the API returns 200 with `duplicate: true` when this
-     *   client_ref already exists, which means an earlier attempt succeeded
-     *   and only its response was lost. Either way the local row is done.
-     *   Returns false for anything worth retrying (network down, 5xx).
-     * @throws PermanentRejection for 4xx, which retrying will never fix.
+     * @return true only when the server has genuinely stored the sale — a
+     *   `{ok:true}` body at 201 (new) or 200 (`duplicate:true`, an earlier
+     *   attempt that succeeded and only lost its response). Returns false for
+     *   anything worth retrying: 5xx, a lost stock race, or a 2xx whose body is
+     *   NOT that acknowledgement (a captive portal or proxy answering 200 with
+     *   its own HTML).
+     * @throws PermanentRejection when the server refused this exact sale for
+     *   good — a bad token/payload, or stock that is genuinely gone.
+     *
+     * The HTTP-status-to-outcome decision lives in [classifySaleResponse],
+     * which is pure and unit-tested; this method only does the I/O.
      */
     fun pushSale(sale: SaleEntity): Boolean {
         val payload = JSONObject()
@@ -179,16 +184,76 @@ object PosApi {
             .build()
 
         return http.newCall(req).execute().use { res ->
-            when {
-                res.isSuccessful -> true                 // 201 new, or 200 duplicate
-                res.code in 400..499 ->
-                    // Rejected payload or bad token. Retrying forever won't
-                    // fix it and would block every sale behind it.
-                    throw PermanentRejection("sale ${res.code}: ${res.body?.string()}")
-                else -> false                            // 5xx -> retry later
+            val body = res.body?.string().orEmpty()
+            when (classifySaleResponse(res.code, body)) {
+                SaleVerdict.STORED    -> true
+                SaleVerdict.RETRY     -> false
+                SaleVerdict.PERMANENT -> throw PermanentRejection("sale ${res.code}: $body")
             }
         }
     }
+
+    /** What the server's answer to POST /sales means for the local queue row. */
+    enum class SaleVerdict {
+        /** Stored server-side. Mark the local row synced. */
+        STORED,
+        /** Not stored, but trying later may work. Leave it queued. */
+        RETRY,
+        /** Refused for good. Take it out of the loop for a human to see. */
+        PERMANENT,
+    }
+
+    /**
+     * Classify the server's answer to POST /sales from the HTTP status and raw
+     * body alone. Pure and network-free, so it is unit-tested directly against
+     * every response `recordSale` in worker/src/index.js can return.
+     *
+     * The contract this codes against, read off that handler:
+     *   201 {ok:true}                         -> STORED  (new sale)
+     *   200 {ok:true, duplicate:true}         -> STORED  (retry of a stored sale)
+     *   2xx without a {ok:true} body          -> RETRY   (captive portal / proxy)
+     *   409 {..., retryable:true}             -> RETRY   (lost a stock write-race)
+     *   409 {error, product, available}       -> PERMANENT (stock genuinely gone)
+     *   other 4xx (400/401/403/…)             -> PERMANENT (bad payload/token)
+     *   5xx and anything else                 -> RETRY
+     *
+     * Two deliberate calls:
+     *
+     *  - A bare 2xx is NOT treated as success. Only a real `{ok:true}` body is.
+     *    A captive portal or transparent proxy returns 200 with its own HTML;
+     *    marking that sale synced would delete a sale that never reached the
+     *    server. An unrecognised 2xx is deferred, not failed: the sale is intact
+     *    and unsent, so a later drain against a real connection stores it. RETRY
+     *    keeps it pending and visible and does NOT block the sales behind it —
+     *    SyncWorker's loop continues past a deferred row. Marking it PERMANENT
+     *    would instead file a sale the server never rejected into the failed
+     *    bucket, which is the more damaging error, so retry is the safe side.
+     *
+     *  - 409 is split on the server's own `retryable` flag rather than on the
+     *    status. recordSale emits `retryable:true` for exactly one case — a lost
+     *    race for stock, where nothing was committed and re-planning succeeds.
+     *    Its other 409 (InsufficientStock) is stock that is really gone, which no
+     *    retry conjures; that stays PERMANENT so it surfaces instead of spinning.
+     */
+    fun classifySaleResponse(status: Int, body: String): SaleVerdict = when {
+        status == 201 && body.trim() == "{\"ok\":true}" -> SaleVerdict.STORED
+        status == 200 && body.trim() == "{\"ok\":true,\"duplicate\":true}" -> SaleVerdict.STORED
+        status in 200..299 -> SaleVerdict.RETRY
+        status == 409 && RETRYABLE_TRUE.containsMatchIn(body) -> SaleVerdict.RETRY
+        status in 400..499 -> SaleVerdict.PERMANENT
+        else -> SaleVerdict.RETRY
+    }
+
+    /**
+     * Retryable is deliberately a tolerant flag check: a false positive keeps a
+     * row queued rather than losing it. Stored acknowledgements above are exact
+     * status/body pairs because a false positive there deletes the only copy.
+     *
+     * No JSON dependency is added for three fixed machine-generated responses,
+     * and this stays runnable in plain JVM tests (android.jar's org.json is a
+     * throwing stub there).
+     */
+    private val RETRYABLE_TRUE = Regex("\"retryable\"\\s*:\\s*true")
 
     class PermanentRejection(message: String) : Exception(message)
 }
