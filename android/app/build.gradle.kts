@@ -41,6 +41,22 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
+/**
+ * Export the Room schema to app/schemas/ as JSON, one file per version.
+ *
+ * These files are checked in on purpose. A migration can only be *tested* against
+ * a real record of the previous schema — without one, `MIGRATION_1_2` is verified
+ * against a remembered shape, and Room's runtime validation is the first thing
+ * that notices a mismatch. On a till that is holding sales which have not reached
+ * the server, that surfaces as a crash loop whose only field fix is uninstalling,
+ * which destroys the record of money already taken.
+ *
+ * Also silences the "Schema export directory was not provided" build warning.
+ */
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
@@ -58,8 +74,13 @@ dependencies {
     // Deferred background sync with a "network connected" constraint
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 
-    // HTTP to Supabase REST. JSON handled by org.json, which is in the platform.
+    // HTTP to the POS Worker API. JSON handled by org.json, which is in the platform.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Tile images. Coil handles the memory and disk caching, which is what makes
+    // a photo load once per device and then show offline. Writing that by hand
+    // against OkHttp would be a cache implementation nobody needs to own.
+    implementation("io.coil-kt:coil:2.7.0")
 
     testImplementation("junit:junit:4.13.2")
 }

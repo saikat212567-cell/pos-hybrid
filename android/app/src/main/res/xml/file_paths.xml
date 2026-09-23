@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the FileProvider is allowed to expose.
+
+  Only the bills/ subdirectory of the app's own cache. Nothing else is shareable,
+  so a bug elsewhere cannot turn this into a way to hand out the Room database —
+  which holds unsynced sales.
+-->
+<paths>
+    <cache-path name="bills" path="bills/" />
+</paths>

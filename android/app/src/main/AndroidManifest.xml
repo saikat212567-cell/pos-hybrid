@@ -18,5 +18,24 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Sharing a bill hands a file to another app. A raw file:// URI throws
+          FileUriExposedException on anything since Android 7, so the file is
+          exposed through a FileProvider instead, which grants read access to just
+          that one URI and only for the life of the intent.
+
+          The authority must match what BillPrinter.share() builds:
+          "${packageName}.fileprovider".
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

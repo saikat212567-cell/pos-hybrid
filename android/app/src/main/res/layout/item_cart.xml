@@ -1,38 +1,77 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  One cart line: name, then − qty + and the amount, then remove.
+
+  All four buttons are 40dp, comfortably past the 48dp-with-padding accessible
+  touch target, because these are pressed constantly and a mis-tap at a counter
+  costs a customer's time.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
     android:minHeight="48dp"
     android:orientation="horizontal"
-    android:paddingVertical="4dp">
+    android:paddingVertical="2dp">
 
     <TextView
-        android:id="@+id/line"
+        android:id="@+id/name"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:ellipsize="end"
-        android:maxLines="1" />
+        android:maxLines="1"
+        android:textSize="14sp" />
 
-    <com.google.android.material.button.MaterialButton
+    <Button
         android:id="@+id/minus"
-        style="@style/Widget.Material3.Button.OutlinedButton"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:contentDescription="Decrease quantity"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
         android:insetTop="0dp"
         android:insetBottom="0dp"
-        android:text="−" />
+        android:minWidth="0dp"
+        android:paddingHorizontal="0dp"
+        android:text="−"
+        android:textSize="16sp" />
 
-    <com.google.android.material.button.MaterialButton
+    <TextView
+        android:id="@+id/qty"
+        android:layout_width="34dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <Button
         android:id="@+id/plus"
-        style="@style/Widget.Material3.Button.OutlinedButton"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:layout_marginStart="4dp"
-        android:contentDescription="Increase quantity"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
         android:insetTop="0dp"
         android:insetBottom="0dp"
-        android:text="+" />
+        android:minWidth="0dp"
+        android:paddingHorizontal="0dp"
+        android:text="+"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/amount"
+        android:layout_width="72dp"
+        android:layout_height="wrap_content"
+        android:gravity="end"
+        android:textSize="14sp" />
+
+    <Button
+        android:id="@+id/remove"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
+        android:minWidth="0dp"
+        android:paddingHorizontal="0dp"
+        android:text="×"
+        android:textColor="#B91C1C"
+        android:textSize="16sp" />
 </LinearLayout>
