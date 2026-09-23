@@ -9,7 +9,9 @@
     "migrate": "wrangler d1 migrations apply pos --remote",
     "//test": "Start the dev server first: npm run dev:test (in another shell)",
     "dev:test": "wrangler dev --port 8801 --local --var POS_TOKEN:test-token --var POS_ADMIN_TOKEN:admin-token-x",
-    "test": "node --test test/api.test.js"
+    "test": "node --test test/gst.test.js test/fifo.test.js test/fy.test.js test/bill.test.js test/items.test.js test/ledger.test.js test/api.test.js",
+    "//test:unit": "Pure engines only: no server, no D1.",
+    "test:unit": "node --test test/gst.test.js test/fifo.test.js test/fy.test.js test/bill.test.js test/items.test.js test/ledger.test.js"
   },
   "devDependencies": {
     "wrangler": "4.136.3"

@@ -11,3 +11,16 @@ node_modules/
 .wrangler/
 .dev.vars
 *.sql.bak
+
+# Room source jars left behind by IDE/tooling inspection. Not build output, so
+# `build/` above does not cover it.
+.tmproom/
+
+# NOT ignored, deliberately: android/app/schemas/*.json. Those are the exported
+# Room schemas, and they are what lets a future migration be tested against the
+# real previous schema instead of a remembered one. Losing them means the next
+# schema change is verified only by Room crashing on a device.
+
+# Workflow scripts copied here to re-run them; the canonical copy lives under
+# ~/.claude/projects/. Not part of the product.
+.workflows/
