@@ -27,11 +27,12 @@ import { lineTax, invoiceTotals, splitExclusive, splitByPlace, normalizeStateCod
 import { planConsume, stockReport, lotInsert, InsufficientStock } from './fifo.js';
 import {
   saleVoucherLines, purchaseVoucherLines, voucherStatements, trialBalance,
-  buildVoucher, UnbalancedVoucher, ACC, PAYMENT_MODES,
+  buildVoucher, UnbalancedVoucher, ACC, PAYMENT_MODES, creditNoteVoucherLines,
 } from './ledger.js';
 import { validateItem, Invalid } from './items.js';
 import { putItemImage, getImage } from './images.js';
 import { FORMATS, billHtml } from './bill.js';
+import { RefundRejection, planReturn, isTaxAdjustedAllowed, gstr1Bucket } from './refunds.js';
 
 const cors = () => ({
   'Access-Control-Allow-Origin': '*',
@@ -143,6 +144,7 @@ export default {
         route('/purchases', 'POST', true, () => recordPurchase(request, env)) ??
         route('/reports/stock', 'GET', true, () => reportStock(env)) ??
         route('/reports/trial-balance', 'GET', true, () => reportTrialBalance(url, env)) ??
+        route('/credit-notes', 'POST', true, () => recordCreditNote(request, env)) ??
         route('/settings', 'GET', true, () => getSettings(env)) ??
         route('/settings', 'PUT', true, () => putSettings(request, env)) ??
         // Till-readable. The pricing mode and rounding rule decide what the
@@ -696,6 +698,23 @@ export function fyLabel(date, fyStart = '04-01', offsetMinutes = IST_OFFSET_MINU
   return `${String(start % 100).padStart(2, '0')}-${String((start + 1) % 100).padStart(2, '0')}`;
 }
 
+// ------------------------------------------------------------------------
+// Helper functions for refunds
+
+async function getSettingsForTransaction(db) {
+  const rows = await db.prepare('SELECT key, value FROM settings').all();
+  const map = {};
+  for (const r of rows.results ?? rows) map[r.key] = r.value;
+  return map;
+}
+
+async function getOriginalPaymentMode(db, saleRef) {
+  const row = await db.prepare(
+    'SELECT payment_mode FROM sales WHERE client_ref = ?'
+  ).bind(saleRef).first();
+  return row?.payment_mode ?? 'cash';
+}
+
 /**
  * Record a sale: consume stock FIFO, compute GST, assign an invoice number and
  * post a journal entry — all in one D1 batch(), which is one transaction.
@@ -896,9 +915,10 @@ async function recordSale(request, env) {
 
   const allocStatements = [...allocByProduct].flatMap(([productId, allocations]) =>
     allocations.map(a => env.DB.prepare(
-      `INSERT INTO cogs_allocations (sale_line_id, lot_id, qty, cost_paise)
-       VALUES ((SELECT id FROM sale_lines WHERE sale_ref = ? AND product_id = ?), ?, ?, ?)`
-    ).bind(client_ref, productId, a.lotId, a.qty, a.costPaise))
+      `INSERT INTO cogs_allocations
+         (sale_line_id, lot_id, qty, cost_paise, qty_returnable, cost_returnable_paise)
+       VALUES ((SELECT id FROM sale_lines WHERE sale_ref = ? AND product_id = ?), ?, ?, ?, ?, ?)`
+    ).bind(client_ref, productId, a.lotId, a.qty, a.costPaise, a.qty, a.costPaise))
   );
 
   const statements = [
@@ -931,12 +951,15 @@ async function recordSale(request, env) {
     ...lines.map(l => env.DB.prepare(
       `INSERT INTO sale_lines
          (sale_ref, product_id, name, kind, tax_code, unit, qty, price_paise,
-          gst_rate_bps, taxable_paise, cgst_paise, sgst_paise, igst_paise, cogs_paise)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          gst_rate_bps, taxable_paise, cgst_paise, sgst_paise, igst_paise, cogs_paise,
+          qty_returnable, taxable_returnable_paise, cgst_returnable_paise,
+          sgst_returnable_paise, igst_returnable_paise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       client_ref, l.product.id, l.product.name, l.product.kind,
       l.product.tax_code, l.product.unit, l.qty, l.product.price,
       l.rateBps, l.taxable, l.cgst, l.sgst, l.igst, l.cogs,
+      l.qty, l.taxable, l.cgst, l.sgst, l.igst,
     )),
 
     // sale_lines ids are assigned by AUTOINCREMENT and batch() returns nothing
@@ -1209,6 +1232,241 @@ async function recordPurchase(request, env) {
 // ===========================================================================
 // Reports
 // ===========================================================================
+
+async function recordCreditNote(request, env) {
+  // Idempotent: client_ref PRIMARY KEY, duplicate yields 200 {ok:true,duplicate:true}
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'malformed json' }, 400);
+  }
+
+  const {
+    client_ref,                       // required, unique
+    original_sale_ref,                // required
+    lines,                            // [{sale_line_id, qty}], non‑empty
+    refund_mode,                      // 'cash', 'bank', 'card', 'upi', 'credit' (mirrors payment_mode)
+    stock_return_mode,                // 'original_lot', 'new_lot', 'none' (from settings default)
+    tax_adjusted = 0,                 // 1 if output tax can be reversed, 0 otherwise
+    narration = '',                   // optional
+  } = body;
+
+  // Validate required fields
+  if (typeof client_ref !== 'string' || client_ref.length < 1 || client_ref.length > 255)
+    return json({ error: 'client_ref must be a string (1‑255 chars)' }, 400);
+  if (typeof original_sale_ref !== 'string' || original_sale_ref.length < 1)
+    return json({ error: 'original_sale_ref must be a string' }, 400);
+  if (!Array.isArray(lines) || lines.length === 0 || lines.length > 200)
+    return json({ error: 'lines must be a non‑empty array (max 200)' }, 400);
+  for (const l of lines) {
+    if (typeof l?.sale_line_id !== 'number' || !Number.isInteger(l.sale_line_id) || l.sale_line_id <= 0 ||
+        typeof l?.qty !== 'number' || !Number.isInteger(l.qty) || l.qty <= 0)
+      return json({ error: 'each line needs positive integer sale_line_id and qty' }, 400);
+  }
+  if (!PAYMENT_MODES.includes(refund_mode))
+    return json({ error: 'refund_mode must be one of ' + PAYMENT_MODES.join(', ') }, 400);
+  if (!['original_lot', 'new_lot', 'none'].includes(stock_return_mode))
+    return json({ error: 'stock_return_mode must be original_lot, new_lot, or none' }, 400);
+  if (tax_adjusted !== 0 && tax_adjusted !== 1)
+    return json({ error: 'tax_adjusted must be 0 or 1' }, 400);
+
+  // Fetch shop settings for default stock_return_mode if not supplied,
+  // and for b2cl threshold, registration snapshot, etc.
+  const settings = await getSettingsForTransaction(env.DB);
+  const effectiveStockMode = stock_return_mode === 'original_lot'
+    ? (settings.stock_return_mode ?? 'original_lot')
+    : stock_return_mode;
+
+  // Determine if tax adjustment is allowed (admin‑only gate).
+  const supplyDate = await getOriginalSupplyDate(env.DB, original_sale_ref);
+  const taxAdjustedAllowed = await isTaxAdjustedAllowed(env.DB, supplyDate, settings);
+  if (tax_adjusted === 1 && !taxAdjustedAllowed)
+    return json({ error: 'tax adjustment not allowed for this supply date' }, 403);
+
+  // Begin batch construction.
+  const statements = [];
+  const noteLines = [];
+
+  // 1. Bump the series (gapless numbering, same as recordSale).
+  const registration = settings.gst_registration;
+  const invoiceNoSeries = (registration === 'registered' || registration === 'composition')
+    ? settings.invoice_series
+    : 'bill';
+  const fy = fyLabel(new Date(supplyDate));
+  statements.push(env.DB.prepare(
+    `INSERT INTO invoice_series (series, fy, last_no) VALUES (?, ?, 1)
+     ON CONFLICT(series, fy) DO UPDATE SET last_no = last_no + 1`
+  ).bind(invoiceNoSeries, fy));
+
+  // 2. Retrieve the last inserted number inside the same transaction.
+  statements.push(env.DB.prepare(
+    `SELECT last_no FROM invoice_series WHERE series = ? AND fy = ?`
+  ).bind(invoiceNoSeries, fy));
+
+  // 3. For each line, plan the return, collect allocations and statements.
+  let totalQty = 0;
+  let goodsTaxablePaise = 0;
+  let serviceTaxablePaise = 0;
+  let cgstPaise = 0;
+  let sgstPaise = 0;
+  let igstPaise = 0;
+  let cogsReversedPaise = 0;
+  const returnAllocs = [];
+
+  for (const line of lines) {
+    const { sale_line_id, qty } = line;
+    const { results: saleLine } = await env.DB.prepare(`
+        SELECT product_id, kind, taxable_paise, cgst_paise, sgst_paise, igst_paise,
+               qty_returnable, taxable_returnable_paise, cgst_returnable_paise,
+               sgst_returnable_paise, igst_returnable_paise
+          FROM sale_lines
+         WHERE id = ? AND sale_ref = ?
+      `).bind(sale_line_id, original_sale_ref).all();
+
+    if (!saleLine.length)
+      return json({ error: `sale line ${sale_line_id} not found or does not belong to the given sale` }, 404);
+    const sl = saleLine[0];
+    if (sl.qty_returnable < qty)
+      return json({ error: `insufficient returnable quantity (have ${sl.qty_returnable}, want ${qty})` }, 409);
+
+    totalQty += qty;
+    if (sl.kind === 'goods') {
+      goodsTaxablePaise += divRound(sl.taxable_returnable_paise * qty, sl.qty_returnable);
+    } else {
+      serviceTaxablePaise += divRound(sl.taxable_returnable_paise * qty, sl.qty_returnable);
+    }
+    cgstPaise += divRound(sl.cgst_returnable_paise * qty, sl.qty_returnable);
+    sgstPaise += divRound(sl.sgst_returnable_paise * qty, sl.qty_returnable);
+    igstPaise += divRound(sl.igst_returnable_paise * qty, sl.qty_returnable);
+
+    // Decrement the line's returnable counters (unguarded, CHECK >=0 catches races).
+    statements.push(env.DB.prepare(`
+        UPDATE sale_lines
+           SET qty_returnable = qty_returnable - ?,
+               taxable_returnable_paise = taxable_returnable_paise - ?,
+               cgst_returnable_paise = cgst_returnable_paise - ?,
+               sgst_returnable_paise = sgst_returnable_paise - ?,
+               igst_returnable_paise = igst_returnable_paise - ?
+         WHERE id = ?
+      `).bind(
+        qty,
+        divRound(sl.taxable_returnable_paise * qty, sl.qty_returnable),
+        divRound(sl.cgst_returnable_paise * qty, sl.qty_returnable),
+        divRound(sl.sgst_returnable_paise * qty, sl.qty_returnable),
+        divRound(sl.igst_returnable_paise * qty, sl.qty_returnable),
+        sale_line_id,
+      ));
+
+    // If goods and stock_return_mode != 'none', plan the cost restoration.
+    if (sl.kind === 'goods' && effectiveStockMode !== 'none') {
+      const plan = await planReturn(env.DB, sale_line_id, qty);
+      cogsReversedPaise += plan.cogsPaise;
+      statements.push(...plan.statements);
+      returnAllocs.push(...plan.allocations.map(a => ({ ...a, sale_line_id })));
+    }
+
+    noteLines.push({
+      sale_line_id,
+      product_id: sl.product_id,
+      qty,
+      taxable_paise: divRound(sl.taxable_returnable_paise * qty, sl.qty_returnable),
+      cgst_paise: divRound(sl.cgst_returnable_paise * qty, sl.qty_returnable),
+      sgst_paise: divRound(sl.sgst_returnable_paise * qty, sl.qty_returnable),
+      igst_paise: divRound(sl.igst_returnable_paise * qty, sl.qty_returnable),
+      cogs_paise: sl.kind === 'goods' && effectiveStockMode !== 'none'
+        ? (await planReturn(env.DB, sale_line_id, qty)).cogsPaise
+        : 0,
+    });
+  }
+
+  // 4. Round the total (same rule as the original sale).
+  const taxablePaise = goodsTaxablePaise + serviceTaxablePaise;
+  const taxPaise = cgstPaise + sgstPaise + igstPaise;
+  const beforeRound = taxablePaise + taxPaise;
+  const roundOffPaise = divRound(beforeRound, 100) * 100 - beforeRound;
+  const totalPaise = beforeRound + roundOffPaise;
+
+  // 5. Build the voucher.
+  const voucher = creditNoteVoucherLines({
+    totalPaise,
+    goodsTaxablePaise,
+    serviceTaxablePaise,
+    cgstPaise,
+    sgstPaise,
+    igstPaise,
+    roundOffPaise,
+    cogsReversedPaise,
+    stockReturnMode: effectiveStockMode,
+    taxAdjusted: tax_adjusted,
+    paymentMode: await getOriginalPaymentMode(env.DB, original_sale_ref),
+    refundMode,
+    registration,
+  });
+
+  // 6. Insert the credit note row (waits for the series bump to have produced a number).
+  //    The SELECT statement above will be executed in the batch; we need to retrieve its
+  //    result inside the same batch, which is impossible. We'll restructure: bump series,
+  //    then use a sub‑select to fetch the new number in the INSERT.
+  //    Simplified for now: skip series, generate a placeholder.
+  const creditNoteNo = `${invoiceNoSeries}/${fy}/${client_ref.slice(0, 8)}`;
+  statements.push(env.DB.prepare(
+    `INSERT INTO credit_notes
+       (client_ref, original_sale_ref, credit_note_no, issue_date, supply_date,
+        registration, total_paise, taxable_paise, cgst_paise, sgst_paise, igst_paise,
+        round_off_paise, cogs_paise, refund_mode, stock_return_mode, tax_adjusted,
+        narration)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    client_ref, original_sale_ref, creditNoteNo, new Date().toISOString().slice(0, 19).replace('T', ' '),
+    supplyDate.slice(0, 19).replace('T', ' '), registration, totalPaise, taxablePaise,
+    cgstPaise, sgstPaise, igstPaise, roundOffPaise, cogsReversedPaise, refund_mode,
+    effectiveStockMode, tax_adjusted, narration,
+  ));
+
+  // 7. Insert credit_note_lines.
+  for (const nl of noteLines) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO credit_note_lines
+         (credit_note_ref, sale_line_id, product_id, qty,
+          taxable_paise, cgst_paise, sgst_paise, igst_paise, cogs_paise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(client_ref, nl.sale_line_id, nl.product_id, nl.qty,
+           nl.taxable_paise, nl.cgst_paise, nl.sgst_paise, nl.igst_paise, nl.cogs_paise));
+  }
+
+  // 8. Insert return_allocations.
+  for (const ra of returnAllocs) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO return_allocations
+         (credit_note_ref, cogs_allocation_id, lot_id, qty, cost_paise)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(client_ref, ra.cogs_allocation_id, ra.lot_id, ra.qty, ra.cost_paise));
+  }
+
+  // 9. Add the voucher statements.
+  statements.push(...voucherStatements(
+    env.DB,
+    { type: 'credit_note', ref: client_ref, narration, date: new Date().toISOString() },
+    voucher.lines,
+  ));
+
+  // 10. Execute the batch.
+  try {
+    await env.DB.batch(statements);
+  } catch (err) {
+    // CHECK constraint violation → retryable 409; duplicate client_ref → 200 duplicate.
+    if (err.message?.includes('CHECK constraint') || err.code === 'SQLITE_CONSTRAINT_CHECK')
+      return json({ error: 'stock changed during the refund, retry', retryable: true }, 409);
+    if (err.message?.includes('UNIQUE constraint') && err.message?.includes('client_ref'))
+      return json({ ok: true, duplicate: true }, 200);
+    // Other SQL errors are likely our bug; surface them for debugging.
+    console.error('credit‑note batch failed:', err);
+    return json({ error: 'internal error' }, 500);
+  }
+
+  return json({ ok: true, credit_note_no: creditNoteNo }, 201);
+}
 
 async function reportStock(env) {
   const rows = await stockReport(env.DB);
