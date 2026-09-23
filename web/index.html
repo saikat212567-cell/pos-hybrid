@@ -3,259 +3,222 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>POS — Web Terminal</title>
+<title>POS Till</title>
 
-<!-- Tailwind via CDN: no build step, no node_modules, nothing to compile. -->
-<script src="https://cdn.tailwindcss.com"></script>
+<!--
+  Hand-written CSS rather than a framework CDN. A till has to open and work on a
+  counter machine with a bad connection, and waiting on a CDN before the screen
+  is usable is the wrong trade. It also means the page works with no network at
+  all, which is the whole point of the offline design.
+-->
+<style>
+  :root {
+    --ink: #111827;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --bg: #f3f4f6;
+    --ok: #047857;
+    --bad: #b91c1c;
+    --warn: #b45309;
+    --accent: #1d4ed8;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+  }
+  .wrap { display: grid; gap: 12px; padding: 12px; max-width: 1400px; margin: 0 auto;
+          grid-template-columns: 1fr; }
+  /* Cart on the right on a wide screen, stacked below on a phone. */
+  @media (min-width: 900px) { .wrap { grid-template-columns: 1fr 24rem; } }
 
-<!-- Supabase JS client (ESM build loaded in the module script below). -->
+  header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 12px;
+           flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; }
+  .status { font-size: 13px; color: var(--muted); margin: 0 0 0 auto; }
+  .status.ok { color: var(--ok); }
+  .status.warn { color: var(--warn); }
+  .status.bad { color: var(--bad); }
+  nav a { font-size: 13px; color: var(--accent); }
+
+  .card { background: #fff; border-radius: 10px; padding: 12px;
+          box-shadow: 0 1px 2px rgb(0 0 0 / .06); }
+
+  /* --- entry -------------------------------------------------------------- */
+  /* Big, because this field is where the whole shift is spent. */
+  #entry {
+    width: 100%; font-size: 22px; padding: 12px 14px; border: 2px solid var(--line);
+    border-radius: 8px; font-variant-numeric: tabular-nums;
+  }
+  #entry:focus { outline: none; border-color: var(--accent);
+                 box-shadow: 0 0 0 3px rgb(29 78 216 / .15); }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  kbd { font: inherit; font-size: 11px; background: var(--bg); border: 1px solid var(--line);
+        border-radius: 4px; padding: 1px 5px; }
+
+  /* --- tiles -------------------------------------------------------------- */
+  #grid { display: grid; gap: 10px; margin-top: 12px;
+          grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+  .tile {
+    display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+    padding: 8px; border: 1px solid var(--line); border-radius: 10px;
+    background: #fff; cursor: pointer; text-align: left; font: inherit;
+    /* 44px is the accessible minimum touch target; these are far larger, which
+       is what makes them usable at speed on a tablet. */
+    min-height: 44px;
+  }
+  .tile:hover { border-color: var(--ink); }
+  .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tile:disabled { opacity: .45; cursor: not-allowed; }
+  .tile-img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px;
+              background: var(--bg); }
+  .tile-initial { display: grid; place-items: center; font-size: 26px; font-weight: 700; }
+  .tile-name { font-weight: 600; font-size: 14px; line-height: 1.25;
+               overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
+               -webkit-box-orient: vertical; }
+  .tile-price { font-variant-numeric: tabular-nums; }
+  .tile-meta { font-size: 11px; color: var(--muted); }
+  .empty { color: var(--muted); font-size: 14px; grid-column: 1 / -1; }
+
+  /* --- cart --------------------------------------------------------------- */
+  #cart { list-style: none; margin: 0 0 10px; padding: 0; max-height: 45vh;
+          overflow-y: auto; }
+  .line { display: grid; grid-template-columns: 1fr auto auto auto auto auto;
+          align-items: center; gap: 6px; padding: 7px 0;
+          border-bottom: 1px solid var(--line); }
+  /* The last-touched line is highlighted because +/- act on it. */
+  .line-last { background: #eff6ff; }
+  .line-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .line button { width: 30px; height: 30px; border: 1px solid var(--line);
+                 border-radius: 6px; background: #fff; font: inherit; cursor: pointer; }
+  .line-qty { min-width: 26px; text-align: center; font-variant-numeric: tabular-nums; }
+  .line-amt { min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+  .line-del { color: var(--bad); }
+
+  dl { margin: 0 0 10px; font-size: 14px; }
+  dl div { display: flex; justify-content: space-between; padding: 2px 0; }
+  dl .grand { font-size: 20px; font-weight: 700; border-top: 2px solid var(--ink);
+              padding-top: 6px; margin-top: 4px; }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  label { font-size: 13px; color: var(--muted); }
+  select { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px;
+           width: 100%; }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .row > * { flex: 1; }
+
+  button.primary {
+    width: 100%; padding: 14px; font-size: 18px; font-weight: 700; color: #fff;
+    background: var(--ink); border: 0; border-radius: 8px; cursor: pointer;
+  }
+  button.primary:disabled { background: #cbd5e1; cursor: not-allowed; }
+  button.ghost { padding: 9px; font: inherit; background: #fff; cursor: pointer;
+                 border: 1px solid var(--line); border-radius: 7px; }
+  button.ghost:disabled { opacity: .5; cursor: not-allowed; }
+
+  .flash { min-height: 20px; font-size: 13px; margin: 8px 0 0; }
+  .flash.ok { color: var(--ok); }
+  .flash.bad { color: var(--bad); font-weight: 600; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 13px;
+           color: var(--muted); margin-top: 8px; }
+  .check input { width: 16px; height: 16px; }
+
+  /* Visible to a screen reader, not on screen. The entry field has a visible
+     placeholder but a placeholder is not a label. */
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+             overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+</style>
 </head>
 
-<body class="bg-slate-100 text-slate-900">
+<body>
+<div class="wrap">
 
-<div class="mx-auto max-w-6xl p-4">
-
-  <header class="mb-4 flex items-baseline justify-between gap-4">
-    <h1 class="text-2xl font-bold">POS Terminal</h1>
-    <!-- Connection state. aria-live so screen readers hear it change. -->
-    <p id="status" role="status" aria-live="polite" class="text-sm text-slate-500">Connecting…</p>
+  <header>
+    <h1>POS Till</h1>
+    <nav><a href="admin.html">Items &amp; settings →</a></nav>
+    <p id="status" class="status" role="status" aria-live="polite">Connecting…</p>
   </header>
 
-  <div class="grid gap-4 lg:grid-cols-[1fr_22rem]">
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Entry + catalog                                                  -->
+  <!-- ---------------------------------------------------------------- -->
+  <main class="card">
+    <label class="sr-only" for="entry">Item code, barcode or name</label>
+    <input id="entry" type="text" inputmode="text" autocomplete="off"
+           autocapitalize="off" spellcheck="false"
+           placeholder="Code, barcode or name…  (3*12 for three)"
+           aria-describedby="entry-hint">
+    <p class="hint" id="entry-hint">
+      <kbd>Enter</kbd> add &nbsp; <kbd>3*12</kbd> quantity &nbsp;
+      <kbd>F2</kbd> charge &nbsp; <kbd>F4</kbd> print &nbsp;
+      <kbd>+</kbd>/<kbd>−</kbd> last line &nbsp; <kbd>Esc</kbd> clear
+    </p>
 
-    <!-- ------------------------------------------------------------------ -->
-    <!-- Catalog                                                            -->
-    <!-- ------------------------------------------------------------------ -->
-    <section aria-labelledby="catalog-h" class="rounded-xl bg-white p-4 shadow-sm">
-      <div class="mb-3 flex items-center gap-3">
-        <h2 id="catalog-h" class="font-semibold">Catalog</h2>
-        <label class="sr-only" for="search">Search products</label>
-        <input id="search" type="search" placeholder="Search…"
-               class="ml-auto w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm
-                      focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/20">
+    <div id="grid" role="list" aria-label="Catalog"></div>
+  </main>
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Cart                                                             -->
+  <!-- ---------------------------------------------------------------- -->
+  <aside class="card">
+    <h2 style="font-size:15px;margin:0 0 8px">
+      Cart <span style="color:var(--muted);font-weight:400">(<span id="count">0</span>)</span>
+    </h2>
+
+    <ul id="cart" aria-label="Cart lines"></ul>
+
+    <dl>
+      <div><dt>Taxable</dt><dd id="taxable">0.00</dd></div>
+      <div><dt>GST</dt><dd id="tax">0.00</dd></div>
+      <div id="roundoff-row" hidden><dt>Round off</dt><dd id="roundoff">0.00</dd></div>
+      <div class="grand"><dt>Total</dt><dd id="total">0.00</dd></div>
+    </dl>
+
+    <div class="row">
+      <div>
+        <label for="paymode">Payment</label>
+        <select id="paymode">
+          <option value="cash">Cash</option>
+          <option value="upi">UPI</option>
+          <option value="card">Card</option>
+          <option value="bank">Bank</option>
+          <option value="credit">Credit (unpaid)</option>
+        </select>
       </div>
-      <div id="grid" class="grid grid-cols-2 gap-3 sm:grid-cols-3"></div>
-    </section>
+      <div>
+        <label for="format">Bill</label>
+        <select id="format">
+          <option value="58mm">58mm roll</option>
+          <option value="80mm">80mm roll</option>
+          <option value="a4">A4 invoice</option>
+        </select>
+      </div>
+    </div>
 
-    <!-- ------------------------------------------------------------------ -->
-    <!-- Cart                                                               -->
-    <!-- ------------------------------------------------------------------ -->
-    <section aria-labelledby="cart-h" class="flex h-fit flex-col rounded-xl bg-white p-4 shadow-sm lg:sticky lg:top-4">
-      <h2 id="cart-h" class="mb-3 font-semibold">Cart</h2>
+    <button id="charge" class="primary" disabled>Charge <kbd>F2</kbd></button>
 
-      <ul id="cart" class="mb-3 max-h-80 divide-y divide-slate-100 overflow-y-auto"></ul>
+    <div class="row" style="margin-top:8px">
+      <button id="reprint" class="ghost" disabled>Print bill</button>
+      <button id="share" class="ghost" disabled>Share / PDF</button>
+    </div>
 
-      <dl class="mb-3 space-y-1 border-t border-slate-200 pt-3 text-sm">
-        <div class="flex justify-between"><dt>Subtotal</dt><dd id="subtotal">0.00</dd></div>
-        <div class="flex justify-between"><dt>Tax (<span id="taxpct">5</span>%)</dt><dd id="tax">0.00</dd></div>
-        <div class="flex justify-between text-base font-bold"><dt>Total</dt><dd id="total">0.00</dd></div>
-      </dl>
+    <label class="check">
+      <input type="checkbox" id="autoprint"> Print automatically after each sale
+    </label>
 
-      <button id="checkout" disabled
-              class="rounded-lg bg-slate-900 px-4 py-2.5 font-semibold text-white
-                     hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900
-                     focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300">
-        Charge
-      </button>
-      <p id="receipt" role="status" aria-live="polite" class="mt-2 min-h-5 text-sm"></p>
-    </section>
-  </div>
+    <p id="flash" class="flash" role="status" aria-live="polite"></p>
+  </aside>
 </div>
 
-<script type="module">
-// ===========================================================================
-// CONFIG — point these at your deployed Worker (see worker/README.md).
-//
-// API_TOKEN is the shared secret you set with `wrangler secret put POS_TOKEN`.
-// It's visible to anyone who views source, so it only keeps strangers out of
-// a write-only sales endpoint. Rotate it by setting a new secret and editing
-// this file.
-// ===========================================================================
-const API_BASE = 'https://pos-api.saikat212567.workers.dev';
-// Paste your POS_TOKEN here to use this file locally. Do NOT commit the real
-// value — see "Serving the web app" in README.md.
-const API_TOKEN = 'YOUR-POS-TOKEN';
-const TAX_RATE = 0.05;
-
-const $ = id => document.getElementById(id);
-
-// Money is integer cents end to end; only formatting divides by 100. Floats
-// accumulate error once you start summing them, and this sums every line.
-const money = cents => (cents / 100).toFixed(2);
-
-const api = (path, opts = {}) =>
-  fetch(API_BASE + path, {
-    ...opts,
-    headers: {
-      Authorization: `Bearer ${API_TOKEN}`,
-      'Content-Type': 'application/json',
-      ...opts.headers,
-    },
-  });
-
-// Product names come from the database, and both grid and cart render via
-// innerHTML. Escape before interpolating so a name containing markup can't
-// inject script into the terminal.
-const esc = s => String(s).replace(/[&<>"']/g,
-  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-// Fallback catalog so the terminal is usable before the Worker is deployed.
-// Prices in cents, matching the API.
-const DEMO = [
-  { id: 'demo-1', name: 'Espresso',   price: 250, stock: 100 },
-  { id: 'demo-2', name: 'Cappuccino', price: 375, stock: 100 },
-  { id: 'demo-3', name: 'Croissant',  price: 295, stock: 40  },
-  { id: 'demo-4', name: 'Veg Wrap',   price: 600, stock: 20  },
-];
-
-let products = [];
-const cart = new Map();   // product id -> { ...product, qty }
-
-// ---------------------------------------------------------------------------
-// Catalog
-// ---------------------------------------------------------------------------
-async function loadProducts() {
-  try {
-    const res = await api('/products');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    products = await res.json();
-    $('status').textContent = `Connected — ${products.length} products`;
-    $('status').className = 'text-sm text-emerald-600';
-  } catch (err) {
-    products = DEMO;
-    $('status').textContent = `Offline — demo catalog (${err.message})`;
-    $('status').className = 'text-sm text-amber-600';
-  }
-  renderGrid();
-}
-
-function renderGrid() {
-  const q = $('search').value.trim().toLowerCase();
-  const shown = q ? products.filter(p => p.name.toLowerCase().includes(q)) : products;
-
-  $('grid').innerHTML = shown.map(p => `
-    <button data-id="${esc(p.id)}" ${p.stock <= 0 ? 'disabled' : ''}
-            class="flex flex-col items-start rounded-lg border border-slate-200 p-3 text-left
-                   hover:border-slate-900 hover:bg-slate-50 focus:outline-none
-                   focus:ring-2 focus:ring-slate-900 disabled:opacity-40">
-      <span class="font-medium">${esc(p.name)}</span>
-      <span class="text-sm text-slate-500">${money(p.price)}</span>
-      <span class="mt-1 text-xs text-slate-400">${p.stock} in stock</span>
-    </button>`).join('') || '<p class="col-span-full text-sm text-slate-500">No matches.</p>';
-}
-
-// ---------------------------------------------------------------------------
-// Cart
-// ---------------------------------------------------------------------------
-function add(id) {
-  const p = products.find(x => x.id === id);
-  if (!p) return;
-  const line = cart.get(id) ?? { ...p, qty: 0 };
-  if (line.qty >= p.stock) return;          // never sell past stock on hand
-  line.qty++;
-  cart.set(id, line);
-  renderCart();
-}
-
-function setQty(id, qty) {
-  const line = cart.get(id);
-  if (!line) return;
-  if (qty <= 0) cart.delete(id);
-  else line.qty = Math.min(qty, line.stock);
-  renderCart();
-}
-
-const subtotalCents = () =>
-  [...cart.values()].reduce((s, l) => s + l.price * l.qty, 0);
-
-/** Tax applied to the whole subtotal, rounded to cents once. Rounding each
- *  line and summing gives a total that doesn't match the printed lines. */
-const totalCents = () => Math.round(subtotalCents() * (1 + TAX_RATE));
-
-function renderCart() {
-  $('cart').innerHTML = [...cart.values()].map(l => `
-    <li class="flex items-center gap-2 py-2">
-      <span class="flex-1 truncate">${esc(l.name)}</span>
-      <button data-dec="${esc(l.id)}" aria-label="One less ${esc(l.name)}"
-              class="h-7 w-7 rounded border border-slate-300 hover:bg-slate-100">−</button>
-      <span class="w-6 text-center tabular-nums">${l.qty}</span>
-      <button data-inc="${esc(l.id)}" aria-label="One more ${esc(l.name)}"
-              class="h-7 w-7 rounded border border-slate-300 hover:bg-slate-100">+</button>
-      <span class="w-14 text-right tabular-nums">${money(l.price * l.qty)}</span>
-    </li>`).join('') || '<li class="py-2 text-sm text-slate-500">Empty</li>';
-
-  const subtotal = subtotalCents();
-  const total = totalCents();
-  $('subtotal').textContent = money(subtotal);
-  // Derived so subtotal + tax always equals the total shown, with no
-  // off-by-a-cent from rounding the two independently.
-  $('tax').textContent = money(total - subtotal);
-  $('total').textContent = money(total);
-  $('taxpct').textContent = TAX_RATE * 100;
-  $('checkout').disabled = cart.size === 0;
-}
-
-// ---------------------------------------------------------------------------
-// Checkout. client_ref makes a retry idempotent server-side, so a lost
-// response can't become a double charge.
-// ---------------------------------------------------------------------------
-async function checkout() {
-  const items = [...cart.values()].map(({ id, name, price, qty }) => ({ id, name, price, qty }));
-  const total = totalCents();
-
-  $('checkout').disabled = true;
-  $('receipt').textContent = 'Charging…';
-
-  let error = null;
-  try {
-    const res = await api('/sales', {
-      method: 'POST',
-      body: JSON.stringify({
-        client_ref: crypto.randomUUID(),
-        source: 'web',
-        total,
-        items,
-      }),
-    });
-    if (!res.ok) error = { message: `HTTP ${res.status} ${await res.text()}` };
-  } catch (err) {
-    error = { message: err.message };
-  }
-
-  if (error) {
-    $('receipt').textContent = `Not logged: ${error.message}`;
-    $('receipt').className = 'mt-2 min-h-5 text-sm text-red-600';
-    $('checkout').disabled = false;
-    return;
-  }
-
-  $('receipt').textContent = `Paid ${money(total)} — sale logged.`;
-  $('receipt').className = 'mt-2 min-h-5 text-sm text-emerald-600';
-  cart.clear();
-  renderCart();
-  loadProducts();   // pick up any stock changes made elsewhere
-}
-
-// ---------------------------------------------------------------------------
-// Wiring — one delegated listener per container instead of per button.
-// ---------------------------------------------------------------------------
-$('grid').addEventListener('click', e => {
-  const b = e.target.closest('button[data-id]');
-  if (b) add(b.dataset.id);
-});
-
-$('cart').addEventListener('click', e => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  if (b.dataset.inc) setQty(b.dataset.inc, (cart.get(b.dataset.inc)?.qty ?? 0) + 1);
-  if (b.dataset.dec) setQty(b.dataset.dec, (cart.get(b.dataset.dec)?.qty ?? 0) - 1);
-});
-
-$('search').addEventListener('input', renderGrid);
-$('checkout').addEventListener('click', checkout);
-
-renderCart();
-loadProducts();
-</script>
+<!--
+  Three classic scripts, in order: config, then the bill helper, then the app.
+  Not ES modules — a module is fetched under CORS rules and a file:// page has an
+  opaque origin, so imports would fail and this would only work behind a web
+  server. See the note at the top of config.js.
+-->
+<script src="config.js"></script>
+<script src="bill.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
