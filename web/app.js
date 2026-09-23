@@ -62,6 +62,27 @@ const cart = new Map();       // id -> { item, qty }
 let lastId = null;            // what +/- adjusts
 let lastSaleRef = null;       // what the reprint button reaches for
 
+/**
+ * The idempotency key for the cart currently on screen.
+ *
+ * Minted once per cart, NOT once per attempt. If a response is lost to a dropped
+ * connection the sale may well be recorded server-side, so pressing Charge again
+ * has to resend the SAME key — that is what makes the server's `client_ref`
+ * PRIMARY KEY collide and answer `duplicate: true` instead of recording a second
+ * sale. Minting a fresh UUID per attempt defeated the whole idempotency design
+ * from the client side and double-charged the customer.
+ *
+ * Cleared when the cart is emptied, so the next customer gets a new key. Android
+ * has always worked this way: SaleEntity.clientRef is generated once at queue
+ * time and reused by every SyncWorker retry.
+ */
+let pendingRef = null;
+
+/** Start a fresh idempotency key for a new cart. */
+function resetPendingRef() {
+  pendingRef = null;
+}
+
 // ---------------------------------------------------------------------------
 // Catalog
 // ---------------------------------------------------------------------------
@@ -335,11 +356,16 @@ function flash(msg, kind = '') {
 async function charge() {
   if (!cart.size) return;
 
+  // Reuse the key if this cart has already been attempted. A retry after a lost
+  // response MUST carry the same client_ref, or the server has no way to tell it
+  // apart from a second sale.
+  if (!pendingRef) pendingRef = crypto.randomUUID();
+
   // Only ids and quantities are sent. Price and tax come from the server's own
   // catalog — a client that could name its own price would let anyone holding
   // the till token sell at whatever they liked.
   const payload = {
-    client_ref: crypto.randomUUID(),
+    client_ref: pendingRef,
     source: 'web',
     total: cartTotals().total,
     items: [...cart.values()].map(({ item, qty }) => ({ id: item.id, qty })),
@@ -361,9 +387,13 @@ async function charge() {
       return;
     }
 
+    // Recorded (a 201 new sale, or a 200 duplicate from a resent key — both mean
+    // it is safely on the server). Only now is the key spent: the cart is done,
+    // so the next customer starts a fresh one.
     lastSaleRef = payload.client_ref;
     const total = money(cartTotals().total);
     cart.clear();
+    resetPendingRef();
     lastId = null;
     renderCart();
     flash(`Paid ₹${total} — F4 to print`, 'ok');
@@ -450,7 +480,9 @@ $('entry').addEventListener('keydown', e => {
     // their mind" case. With text in it, it just clears the field.
     if ($('entry').value) { $('entry').value = ''; renderGrid(); }
     else if (cart.size && confirm('Clear the cart?')) {
-      cart.clear(); lastId = null; renderCart();
+      // A different sale now, so drop the idempotency key too — otherwise the
+      // abandoned cart's key could attach to whatever the next customer buys.
+      cart.clear(); resetPendingRef(); lastId = null; renderCart();
     }
   }
 });
