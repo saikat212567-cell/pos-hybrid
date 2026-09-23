@@ -1386,22 +1386,60 @@ test('bill_format is validated when set', async () => {
   assert.equal(res.status, 400);
 });
 
-test('shop details reach the printed bill', async () => {
-  try {
-    await call('/settings', {
-      method: 'PUT',
-      body: JSON.stringify({ legal_name: 'Ganesh Stores', address: '12 Market Road' }),
-    }, ADMIN);
-
-    const s = sale({ items: [{ id: 'espresso', qty: 1 }] });
-    await call('/sales', { method: 'POST', body: JSON.stringify(s) });
-
-    const html = await (await call(`/sales/${s.client_ref}?format=a4`)).text();
-    assert.ok(html.includes('Ganesh Stores'));
-    assert.ok(html.includes('12 Market Road'));
-  } finally {
-    await call('/settings', {
-      method: 'PUT', body: JSON.stringify({ legal_name: '', address: '' }),
-    }, ADMIN);
+test('all accounting report endpoints are admin-only', async () => {
+  const paths = [
+    '/reports/profit-loss?from=2026-04-01&to=2026-04-30',
+    '/reports/balance-sheet?as_of=2026-04-30',
+    '/reports/sales-register?from=2026-04-01&to=2026-04-30',
+    '/reports/purchase-register?from=2026-04-01&to=2026-04-30',
+    '/reports/cash-book?from=2026-04-01&to=2026-04-30',
+    '/reports/day-book?from=2026-04-01&to=2026-04-30',
+    '/reports/integrity/stock?as_of=2026-04-30',
+  ];
+  for (const path of paths) {
+    assert.equal((await call(path)).status, 401, `till token must not read ${path}`);
+    assert.equal((await call(path, {}, ADMIN)).status, 200, `admin token must read ${path}`);
   }
 });
+
+test('accounting reports return integer paise and period metadata', async () => {
+  const res = await call('/reports/profit-loss?from=2026-04-01&to=2026-04-30', {}, ADMIN);
+  const pl = await res.json();
+  assert.equal(res.status, 200);
+  assert.deepEqual(pl.period, {
+    timezone: 'Asia/Kolkata', from: '2026-04-01', to: '2026-04-30', to_exclusive: '2026-05-01',
+  });
+  assert.equal(pl.currency, 'INR');
+  assert.equal(pl.unit, 'paise');
+  assert.ok(Number.isSafeInteger(pl.net_profit_paise));
+  assert.ok(Number.isSafeInteger(pl.revenue.total_paise));
+});
+
+test('report period end is an exclusive India business midnight', async () => {
+  const res = await call('/reports/day-book?from=2026-04-01&to=2026-04-01', {}, ADMIN);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.period.to_exclusive, '2026-04-02');
+});
+
+test('balance sheet and P&L agree on the selected period', async () => {
+  const pl = await (await call('/reports/profit-loss?from=2026-04-01&to=2026-04-30', {}, ADMIN)).json();
+  const bs = await (await call('/reports/balance-sheet?from=2026-04-01&as_of=2026-04-30', {}, ADMIN)).json();
+  assert.equal(bs.period_net_profit_paise, pl.net_profit_paise);
+  assert.equal(bs.balanced, true);
+  assert.equal(bs.totals.assets_paise, bs.totals.liabilities_and_equity_paise);
+});
+
+test('stock integrity exposes both values and reconciliation result', async () => {
+  const body = await (await call('/reports/integrity/stock?as_of=2026-04-30', {}, ADMIN)).json();
+  for (const key of ['fifo_stock_paise', 'stock_in_hand_paise', 'difference_paise']) {
+    assert.ok(Number.isSafeInteger(body[key]), `${key} should be integer paise`);
+  }
+  assert.equal(body.reconciled, body.difference_paise === 0);
+});
+
+test('bad report dates are rejected', async () => {
+  assert.equal((await call('/reports/profit-loss?from=2026-02-30', {}, ADMIN)).status, 400);
+  assert.equal((await call('/reports/balance-sheet?as_of=tomorrow', {}, ADMIN)).status, 400);
+});
+

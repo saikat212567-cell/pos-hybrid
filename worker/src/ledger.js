@@ -26,7 +26,9 @@ export const ACC = {
   SALES: '4000',
   SERVICE_INCOME: '4100',
   COGS: '5000',
+  GOODS_WRITTEN_OFF: '5100',
   ROUND_OFF: '5900',
+  GST_NOT_RECOVERABLE: '5910',
 };
 
 /** Where the money lands (or is owed from) for a given payment mode. */
@@ -220,7 +222,7 @@ export async function trialBalance(db, { from = null, to = null } = {}) {
   const where = [];
   const binds = [];
   if (from) { where.push('v.date >= ?'); binds.push(from); }
-  if (to)   { where.push('v.date <= ?'); binds.push(to); }
+  if (to)   { where.push('v.date < ?'); binds.push(to); }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const { results } = await db

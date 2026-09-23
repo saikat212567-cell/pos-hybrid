@@ -26,12 +26,17 @@
 import { lineTax, invoiceTotals, splitExclusive, splitByPlace, normalizeStateCode } from './gst.js';
 import { planConsume, stockReport, lotInsert, InsufficientStock } from './fifo.js';
 import {
-  saleVoucherLines, purchaseVoucherLines, voucherStatements, trialBalance,
+  saleVoucherLines, purchaseVoucherLines, voucherStatements,
   buildVoucher, UnbalancedVoucher, ACC, PAYMENT_MODES,
 } from './ledger.js';
 import { validateItem, Invalid } from './items.js';
 import { putItemImage, getImage } from './images.js';
 import { FORMATS, billHtml } from './bill.js';
+import {
+  reportTrialBalance as buildTrialBalance, reportProfitLoss, reportBalanceSheet,
+  reportSalesRegister, reportPurchaseRegister, reportStockRegister,
+  reportStockIntegrity, reportCashBook, reportDayBook, InvalidReportPeriod,
+} from './reports.js';
 
 const cors = () => ({
   'Access-Control-Allow-Origin': '*',
@@ -141,8 +146,15 @@ export default {
         route('/sales', 'POST', false, () => recordSale(request, env)) ??
         route('/sales', 'GET', true, () => listSales(url, env)) ??
         route('/purchases', 'POST', true, () => recordPurchase(request, env)) ??
-        route('/reports/stock', 'GET', true, () => reportStock(env)) ??
+        route('/reports/stock', 'GET', true, () => reportStock(url, env)) ??
         route('/reports/trial-balance', 'GET', true, () => reportTrialBalance(url, env)) ??
+        route('/reports/profit-loss', 'GET', true, () => reportJson(url, env, reportProfitLoss)) ??
+        route('/reports/balance-sheet', 'GET', true, () => reportJson(url, env, reportBalanceSheet)) ??
+        route('/reports/sales-register', 'GET', true, () => reportJson(url, env, reportSalesRegister)) ??
+        route('/reports/purchase-register', 'GET', true, () => reportJson(url, env, reportPurchaseRegister)) ??
+        route('/reports/cash-book', 'GET', true, () => reportJson(url, env, reportCashBook)) ??
+        route('/reports/day-book', 'GET', true, () => reportJson(url, env, reportDayBook)) ??
+        route('/reports/integrity/stock', 'GET', true, () => reportJson(url, env, reportStockIntegrity)) ??
         route('/settings', 'GET', true, () => getSettings(env)) ??
         route('/settings', 'PUT', true, () => putSettings(request, env)) ??
         // Till-readable. The pricing mode and rounding rule decide what the
@@ -1210,20 +1222,49 @@ async function recordPurchase(request, env) {
 // Reports
 // ===========================================================================
 
-async function reportStock(env) {
-  const rows = await stockReport(env.DB);
-  return json({
-    items: rows,
-    totalValuePaise: rows.reduce((s, r) => s + r.value_paise, 0),
-  });
+/** Query params a report handler reads. Undefined keys let the report default. */
+const reportOptions = url => {
+  const opts = {};
+  for (const key of ['from', 'to', 'as_of']) {
+    const value = url.searchParams.get(key);
+    if (value !== null) opts[key] = value;
+  }
+  return opts;
+};
+
+/** Thin wrapper: turn an InvalidReportPeriod into a 400 rather than a 500. */
+async function reportJson(url, env, build) {
+  try {
+    return json(await build(env.DB, reportOptions(url)));
+  } catch (err) {
+    if (err instanceof InvalidReportPeriod) return json({ error: err.message }, 400);
+    throw err;
+  }
+}
+
+/**
+ * Stock on hand. The legacy `items`/`totalValuePaise` shape is kept verbatim so
+ * the two shipped clients and existing tests are unaffected; the FIFO subledger
+ * and the lot-vs-control reconciliation are added beside it.
+ */
+async function reportStock(url, env) {
+  try {
+    const rows = await stockReport(env.DB);
+    const subledger = await reportStockRegister(env.DB, reportOptions(url));
+    return json({
+      items: rows,
+      totalValuePaise: rows.reduce((s, r) => s + r.value_paise, 0),
+      subledger,
+      reconciliation: subledger.reconciliation,
+    });
+  } catch (err) {
+    if (err instanceof InvalidReportPeriod) return json({ error: err.message }, 400);
+    throw err;
+  }
 }
 
 async function reportTrialBalance(url, env) {
-  const tb = await trialBalance(env.DB, {
-    from: url.searchParams.get('from'),
-    to: url.searchParams.get('to'),
-  });
   // `balanced` is the point of the whole exercise: if it is ever false,
   // something wrote to voucher_lines without going through buildVoucher.
-  return json({ ...tb, balanced: tb.net === 0 });
+  return reportJson(url, env, buildTrialBalance);
 }
