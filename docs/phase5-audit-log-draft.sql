@@ -5,53 +5,50 @@
 --
 -- THE CENTRAL IDEA: log every mutation to settings, items, and item images
 -- with before/after JSON snapshots. This creates an immutable audit trail
--- for compliance (who changed GST rate/price/registration when) and
--- debugging. The table is append-only; no row is ever updated or deleted.
+-- for compliance (what changed, when, and by whom once identity exists).
+-- The table is append-only; no application path updates or deletes rows.
 --
 -- Why NOT trigger-based: D1 SQLite trigger support is unverified. A migration
--- that relies on triggers silently fails would leave no audit trail at all.
+-- that relies on triggers silently failing would leave no audit trail at all.
 -- Better to add the logging explicitly in each write path where we already
 -- have the before/after values.
 --
--- Why NOT a separate side table: Adding a column to the main audit table
--- requires a table rewrite in older SQLite, but ADD COLUMN with constant
--- default is safe. The schema below uses only constant defaults, so it's
--- safe to apply to a database holding real money.
+-- SAFE AGAINST A LIVE DATABASE: this migration only CREATEs a new table and
+-- its indexes. It does not ALTER, rewrite, or even read `sales`, `sale_lines`,
+-- `stock_lots`, `cogs_allocations`, `vouchers` or `voucher_lines`. The money
+-- tables are untouched, so there is no copy-and-rename step and nothing to
+-- lose if the migration is interrupted half way: either audit_log exists or
+-- it does not, and the POS sells correctly in both cases.
 --
--- actor_id is nullable because user identity/RBAC (phase 5) is not yet
--- implemented. When that arrives, existing rows will have NULL actor_id,
--- and new rows will record the admin token's actor_id. The audit trail
--- still works: we know WHO (admin token), WHAT (mutation type), and WHEN.
+-- actor_id is nullable because user identity (phase 5 RBAC) does not exist
+-- yet. Until it does, every row is written with actor_id NULL and this table
+-- answers WHAT changed and WHEN, but NOT WHO — a request authenticated by a
+-- single shared admin token carries no identity to record. That is the known
+-- ceiling, and it is why this migration is worth applying before phase 5
+-- rather than with it: the before/after history cannot be reconstructed
+-- retrospectively, whereas actor_id can be populated from the day identity
+-- lands. Do not read a NULL actor_id as "unknown user"; read it as
+-- "pre-identity".
 --
 -- JSON serialization is deliberate: flexible enough to hold any column set,
 -- and SQLite handles TEXT naturally. A columnar audit table would need
--- ALTER TABLE per new field and still couldn't capture full row state.
+-- ALTER TABLE per new field and still could not capture full row state.
 
--- ---------------------------------------------------------------------------
--- Audit log table. One row per mutation event.
--- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   at          TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  -- NULL until phase 5 RBAC is implemented. When present, matches an actor
-  -- table that doesn't exist yet.
   actor_id    TEXT,
   entity      TEXT    NOT NULL,
-  -- The primary key value of the mutated row, as TEXT so it works for
-  -- string keys (products.id) and integer keys (settings are implicit).
   entity_id   TEXT    NOT NULL,
-  -- action: 'create' | 'update' | 'delete' | 'put' (settings upsert)
   action      TEXT    NOT NULL,
-  -- Full row state BEFORE the mutation, as JSON. NULL for create (nothing
-  -- existed). Stored as TEXT because SQLite has no JSON type, but the
-  -- value is always valid JSON.
+  -- NULL only for create, when no previous row existed.
   before_json TEXT,
-  -- Full row state AFTER the mutation, as JSON. For delete, this is the
-  -- last known state. Stored as TEXT, always valid JSON.
+  -- Full row state after create/update/deactivate/image upload.
   after_json  TEXT    NOT NULL
 );
 
--- Index for common queries: audit a specific entity type, or audit a
--- specific entity by id.
-CREATE INDEX IF NOT EXISTS audit_log_entity_idx ON audit_log (entity, entity_id);
-CREATE INDEX IF NOT EXISTS audit_log_at_idx ON audit_log (at DESC);
+-- Timeline for one object; global chronological views use the second index.
+CREATE INDEX IF NOT EXISTS audit_log_entity_idx
+  ON audit_log (entity, entity_id, id);
+CREATE INDEX IF NOT EXISTS audit_log_at_idx
+  ON audit_log (at DESC, id DESC);
