@@ -32,7 +32,6 @@ import {
 import { validateItem, Invalid } from './items.js';
 import { putItemImage, getImage } from './images.js';
 import { FORMATS, billHtml } from './bill.js';
-import { RefundRejection, planReturn, isTaxAdjustedAllowed, gstr1Bucket } from './refunds.js';
 
 const cors = () => ({
   'Access-Control-Allow-Origin': '*',
@@ -934,18 +933,17 @@ async function recordSale(request, env) {
       `INSERT INTO sales
          (client_ref, source, total, items, invoice_no, taxable_paise,
           cgst_paise, sgst_paise, igst_paise, round_off_paise, total_paise,
-          cogs_paise, total_mismatch, place_of_supply, customer_gstin, payment_mode)
-       VALUES (?, ?, ?, ?, ${invoiceNo}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          cogs_paise, total_mismatch, place_of_supply, customer_gstin, payment_mode,
+          actor_id, business_date)
+       VALUES (?, ?, ?, ?, ${invoiceNo}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       client_ref, src, total, JSON.stringify(items),
       series, fy, series, fy,
       totals.taxable, totals.cgst, totals.sgst, totals.igst, totals.roundOff,
       totals.total, cogsTotal,
-      // The client's own total is kept verbatim in `total` and compared, not
-      // trusted. A client with a stale tax rate still records a correct sale,
-      // and the disagreement is visible instead of silently reconciled.
       total === totals.total ? 0 : 1,
       ctx.buyerState, body.customer_gstin ?? null, paymentMode,
+      body.actor_id ?? null, body.business_date ?? null,
     ),
 
     ...lines.map(l => env.DB.prepare(
@@ -1071,7 +1069,7 @@ async function recordPurchase(request, env) {
     return json({ error: 'malformed json' }, 400);
   }
 
-  const { supplier_name, supplier_gstin, supplier_inv_no, lines, payment_mode } = body ?? {};
+  const { supplier_name, supplier_gstin, supplier_inv_no, lines, payment_mode, actor_id, business_date } = body ?? {};
 
   if (!Array.isArray(lines) || lines.length === 0 || lines.length > 200) {
     return json({ error: 'lines must be a non-empty array (max 200)' }, 400);
@@ -1192,11 +1190,13 @@ async function recordPurchase(request, env) {
     env.DB.prepare(
       `INSERT INTO purchases
          (supplier_name, supplier_gstin, supplier_inv_no, taxable_paise,
-          cgst_paise, sgst_paise, igst_paise, total_paise, payment_mode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          cgst_paise, sgst_paise, igst_paise, total_paise, payment_mode,
+          actor_id, business_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       supplier_name ?? '', supplier_gstin ?? null, supplier_inv_no ?? null,
       taxable, cgst, sgst, igst, total, payment_mode ?? 'cash',
+      actor_id ?? null, business_date ?? null,
     ),
     ...lots.flatMap(l => [
       // taxable_paise here is the supplier's taxable value, matching the
@@ -1415,13 +1415,14 @@ async function recordCreditNote(request, env) {
        (client_ref, original_sale_ref, credit_note_no, issue_date, supply_date,
         registration, total_paise, taxable_paise, cgst_paise, sgst_paise, igst_paise,
         round_off_paise, cogs_paise, refund_mode, stock_return_mode, tax_adjusted,
-        narration)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        narration, actor_id, business_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     client_ref, original_sale_ref, creditNoteNo, new Date().toISOString().slice(0, 19).replace('T', ' '),
     supplyDate.slice(0, 19).replace('T', ' '), registration, totalPaise, taxablePaise,
     cgstPaise, sgstPaise, igstPaise, roundOffPaise, cogsReversedPaise, refund_mode,
     effectiveStockMode, tax_adjusted, narration,
+    body.actor_id ?? null, body.business_date ?? null,
   ));
 
   // 7. Insert credit_note_lines.
