@@ -22,7 +22,7 @@
 /** Half-up rounding on a rational, in integers. Math.round() on a float
  *  would reintroduce exactly the imprecision the paise representation is
  *  there to avoid. */
-const divRound = (numerator, denominator) =>
+export const divRound = (numerator, denominator) =>
   Math.floor((numerator + Math.floor(denominator / 2)) / denominator);
 
 const BPS = 10000;

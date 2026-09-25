@@ -26,6 +26,8 @@ export const ACC = {
   SALES: '4000',
   SERVICE_INCOME: '4100',
   COGS: '5000',
+  GOODS_WRITTEN_OFF: '5100',
+  GST_NOT_RECOVERABLE: '5910',
   ROUND_OFF: '5900',
 };
 
@@ -160,6 +162,83 @@ export function purchaseVoucherLines({ taxable, cgst, sgst, igst, total, payment
     dr(ACC.INPUT_IGST, igst),
     cr(settlementAccount(paymentMode), total),
   ]);
+}
+
+/**
+ * Journal entry for a credit note.
+ *
+ * Mirrors saleVoucherLines with sides swapped, then drops zero-value lines
+ * (which happens automatically because buildVoucher filters them) and adds
+ * GST Not Recoverable when tax_adjusted = 0.
+ *
+ * @param totalPaise - amount actually refunded, after rounding (positive magnitude)
+ * @param taxablePaise, cgstPaise, sgstPaise, igstPaise - each a positive magnitude
+ * @param cogsReversedPaise - cost put back into lots (positive)
+ * @param paymentMode - how the money goes back (sale.payment_mode possibly overridden)
+ * @param refundMode - how the money actually went back (credit_note.refund_mode)
+ * @param stockReturnMode - 'original_lot', 'new_lot', 'none'
+ * @param taxAdjusted - 0 if GST cannot be reversed, 1 if it can
+ * @param registration - snapshot from the note
+ */
+export function creditNoteVoucherLines({
+  totalPaise,
+  goodsTaxablePaise,
+  serviceTaxablePaise,
+  cgstPaise,
+  sgstPaise,
+  igstPaise,
+  roundOffPaise,
+  cogsReversedPaise,
+  stockReturnMode,
+  taxAdjusted,
+  paymentMode,             // original sale's mode (for sale refund)
+  refundMode,              // how cash goes back (may differ)
+  registration,
+}) {
+  const lines = [];
+
+  // Money goes back.
+  // If refundMode differs from sale's paymentMode, we still debit the same
+  // settlement account — the sale's original account — because that is where
+  // the money was received. A card‑sale cash‑refund increases Cash in Hand
+  // and decreases the original settlement (Bank for card), which nets to the
+  // correct movement.
+  lines.push(cr(settlementAccount(paymentMode), totalPaise));
+
+  // Revenue is debited.
+  lines.push(dr(ACC.SALES, goodsTaxablePaise));
+  lines.push(dr(ACC.SERVICE_INCOME, serviceTaxablePaise));
+
+  // Output GST is reversed if tax_adjusted, otherwise unrecoverable expense.
+  if (taxAdjusted === 1) {
+    lines.push(dr(ACC.OUTPUT_CGST, cgstPaise));
+    lines.push(dr(ACC.OUTPUT_SGST, sgstPaise));
+    lines.push(dr(ACC.OUTPUT_IGST, igstPaise));
+  } else {
+    // Financial/commercial credit note — GST cannot be reclaimed from the government.
+    lines.push(dr(ACC.GST_NOT_RECOVERABLE, cgstPaise + sgstPaise + igstPaise));
+  }
+
+  // Round off adjustment (signed as in sale).
+  lines.push(
+    roundOffPaise >= 0
+      ? dr(ACC.ROUND_OFF, roundOffPaise)
+      : cr(ACC.ROUND_OFF, -roundOffPaise)
+  );
+
+  // COGS reversal: Cr COGS, Dr Stock or Goods Written Off.
+  if (cogsReversedPaise > 0) {
+    lines.push(cr(ACC.COGS, cogsReversedPaise));
+    if (stockReturnMode === 'none') {
+      // Cost written off as a loss (goods came back damaged or not at all).
+      lines.push(dr(ACC.GOODS_WRITTEN_OFF, cogsReversedPaise));
+    } else {
+      // Cost restored to stock.
+      lines.push(dr(ACC.STOCK, cogsReversedPaise));
+    }
+  }
+
+  return buildVoucher(lines);
 }
 
 /**
