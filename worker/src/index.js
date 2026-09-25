@@ -32,6 +32,7 @@ import {
 import { validateItem, Invalid } from './items.js';
 import { putItemImage, getImage } from './images.js';
 import { FORMATS, billHtml } from './bill.js';
+import { gstr1, gstr3b, GstrError, currentPeriod } from './gstr.js';
 
 const cors = () => ({
   'Access-Control-Allow-Origin': '*',
@@ -144,6 +145,8 @@ export default {
         route('/reports/stock', 'GET', true, () => reportStock(env)) ??
         route('/reports/trial-balance', 'GET', true, () => reportTrialBalance(url, env)) ??
         route('/credit-notes', 'POST', true, () => recordCreditNote(request, env)) ??
+        route('/reports/gstr1', 'GET', true, () => reportGstr(url, env, gstr1)) ??
+        route('/reports/gstr3b', 'GET', true, () => reportGstr(url, env, gstr3b)) ??
         route('/settings', 'GET', true, () => getSettings(env)) ??
         route('/settings', 'PUT', true, () => putSettings(request, env)) ??
         // Till-readable. The pricing mode and rounding rule decide what the
@@ -1485,4 +1488,23 @@ async function reportTrialBalance(url, env) {
   // `balanced` is the point of the whole exercise: if it is ever false,
   // something wrote to voucher_lines without going through buildVoucher.
   return json({ ...tb, balanced: tb.net === 0 });
+}
+
+/**
+ * GSTR-1 / GSTR-3B portal JSON. Thin: all shape and validation logic lives in
+ * gstr.js, which is pure and independently testable. This just supplies the
+ * missing period default, translates the builder's own error into a response,
+ * and lets `?preflight=1` check a period's data without asking for the export.
+ */
+async function reportGstr(url, env, builder) {
+  const defaultPeriod = currentPeriod();
+  const period = url.searchParams.get('period') ?? defaultPeriod;
+  const preflightOnly = url.searchParams.get('preflight') === '1';
+
+  try {
+    return json(await builder(env, period, { preflightOnly }));
+  } catch (err) {
+    if (err instanceof GstrError) return json(err.body, err.status);
+    throw err;
+  }
 }

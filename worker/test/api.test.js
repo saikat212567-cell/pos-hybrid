@@ -1405,3 +1405,128 @@ test('shop details reach the printed bill', async () => {
     }, ADMIN);
   }
 });
+
+// ===========================================================================
+// Phase 3: GSTR-1 / GSTR-3B portal JSON export.
+//
+// The arithmetic and the JSON shapes are covered in gstr.test.js, which needs
+// no server. What is tested here is what only the route can show: that the
+// endpoints are admin-only, that a bad period is refused, and that the export
+// refuses to emit the malformed place_of_supply rows this database really holds
+// rather than putting them into a filed return.
+// ===========================================================================
+
+/** The period of a date, as the portal writes it: MMYYYY. */
+const periodOf = (date = new Date()) =>
+  `${String(date.getUTCMonth() + 1).padStart(2, '0')}${date.getUTCFullYear()}`;
+
+test('till token cannot read either GST return', async () => {
+  // These expose the whole month's revenue and the shop's GSTIN.
+  assert.equal((await call('/reports/gstr1')).status, 401);
+  assert.equal((await call('/reports/gstr3b')).status, 401);
+  assert.equal((await fetch(`${BASE}/reports/gstr1`)).status, 401);
+});
+
+test('a malformed period is refused rather than guessed at', async () => {
+  for (const bad of ['2026-04', '4-2026', '132026', '002026', 'April', '040000']) {
+    for (const path of ['gstr1', 'gstr3b']) {
+      const res = await call(`/reports/${path}?period=${encodeURIComponent(bad)}`, {}, ADMIN);
+      assert.equal(res.status, 400, `${path} period ${JSON.stringify(bad)} should be refused`);
+    }
+  }
+});
+
+test('the preflight names the malformed place_of_supply rows instead of filing them', async () => {
+  // This database holds sales written while reproducing the place-of-supply bug
+  // ("nineteen", "1 9", "019"). An export that silently emitted them would put
+  // an invalid state code into a filed return, so the export refuses and says
+  // which documents to fix. ?preflight=1 is the same check without the JSON.
+  const res = await call(`/reports/gstr1?period=${periodOf()}&preflight=1`, {}, ADMIN);
+  assert.equal(res.status, 200, 'the preflight itself always answers');
+
+  const body = await res.json();
+  assert.equal(typeof body.validation.ok, 'boolean');
+  assert.ok(Array.isArray(body.validation.errors));
+  assert.equal(body.data, null, 'a preflight returns no return data');
+
+  if (!body.validation.ok) {
+    // Every reported problem must name the offending documents, or there is
+    // nothing actionable — and the export must refuse, not clamp.
+    for (const err of body.validation.errors) {
+      assert.ok(err.field, 'an error must name its field');
+      assert.ok(err.client_refs.length > 0, `${err.field} must name the offending documents`);
+    }
+    const full = await call(`/reports/gstr1?period=${periodOf()}`, {}, ADMIN);
+    assert.equal(full.status, 422, 'a failing preflight must block the export');
+    assert.equal((await full.json()).validation.ok, false);
+  }
+});
+
+test('a clean period exports plausible GSTR-1 JSON', async () => {
+  // A period with no sales in it is still a valid return: empty sections, not an
+  // error, and no invalid document can be present to block it.
+  const res = await call('/reports/gstr1?period=011999', {}, ADMIN);
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+
+  const body = JSON.parse(text);
+  assert.equal(body.fp, '011999');
+  assert.equal(typeof body.gstin, 'string');
+  assert.equal(body.validation.ok, true);
+  for (const section of ['b2b', 'b2cs', 'hsn_b2c', 'doc_issue', 'cdnr']) {
+    assert.ok(Array.isArray(body.data[section]), `${section} should be an array`);
+  }
+});
+
+test('GSTR-3B reports the ledger in rupees, with at most two decimals', async () => {
+  const res = await call('/reports/gstr3b?period=011999', {}, ADMIN);
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+
+  const { data } = JSON.parse(text);
+  for (const key of ['txval', 'iamt', 'camt', 'samt', 'csamt']) {
+    assert.equal(typeof data.osup_det[key], 'number', `osup_det.${key} must be a number`);
+    // Rupees to two decimals: a third decimal means a float divide crept in.
+    assert.equal(Math.round(data.osup_det[key] * 100) / 100, data.osup_det[key],
+      `osup_det.${key} must be exact to two decimals`);
+  }
+  assert.ok('net_itc' in data.itc_elg, 'input tax credit must be reported');
+});
+
+test('a composition dealer is refused both returns, with CMP-08 named', async () => {
+  // A composition dealer files CMP-08 and GSTR-4. Returning an empty GSTR-1
+  // would look like "nothing to file" rather than "wrong form".
+  try {
+    await call('/settings', {
+      method: 'PUT', body: JSON.stringify({ gst_registration: 'composition' }),
+    }, ADMIN);
+
+    const res = await call(`/reports/gstr1?period=${periodOf()}`, {}, ADMIN);
+    assert.equal(res.status, 422);
+    const body = await res.json();
+    assert.match(body.error, /CMP-08/);
+    assert.equal(body.registration, 'composition');
+
+    assert.equal((await call(`/reports/gstr3b?period=${periodOf()}`, {}, ADMIN)).status, 422);
+  } finally {
+    await call('/settings', {
+      method: 'PUT', body: JSON.stringify({ gst_registration: 'regular' }),
+    }, ADMIN);
+  }
+});
+
+test('an unregistered business is refused, since it files no GST return at all', async () => {
+  try {
+    await call('/settings', {
+      method: 'PUT', body: JSON.stringify({ gst_registration: 'unregistered' }),
+    }, ADMIN);
+
+    const res = await call(`/reports/gstr3b?period=${periodOf()}`, {}, ADMIN);
+    assert.equal(res.status, 422);
+    assert.match((await res.json()).error, /unregistered/);
+  } finally {
+    await call('/settings', {
+      method: 'PUT', body: JSON.stringify({ gst_registration: 'regular' }),
+    }, ADMIN);
+  }
+});
