@@ -1,23 +1,6 @@
-/**
- * FIFO stock consumption and cost of goods sold.
- *
- * THE CORE PROBLEM: unit cost is usually not an integer. Buy 3 units for
- * ₹10.00 and each costs 333.33 paise, which no integer column can hold. Store
- * a rounded unit cost and every sale leaks a fraction — the lot shows stock
- * remaining with no cost left against it (or the reverse), inventory never
- * drains to zero, and COGS no longer equals what the goods actually cost.
- *
- * THE FIX: a lot tracks quantity remaining and COST remaining. Taking q of n
- * remaining costs round(cost_remaining * q / n). The last unit out of a lot
- * therefore takes whatever cost is left, whatever that happens to be. Total
- * COGS across a lot's life always equals its purchase cost exactly, and both
- * remainders reach zero together. No unit cost is ever stored or rounded.
- *
- * Services short-circuit: no lots, no stock check, no COGS.
- */
+import { divRound } from "./gst.js";
 
-/** Half-up rounding on integers; see the note in gst.js on why not Math.round. */
-const divRound = (n, d) => Math.floor((n + Math.floor(d / 2)) / d);
+function assert(cond) { if (!cond) throw new Error("Assertion failed"); }
 
 export class InsufficientStock extends Error {
   constructor(productId, wanted, available) {
@@ -37,7 +20,7 @@ export class InsufficientStock extends Error {
  * sale is also recorded.
  *
  * @param db    D1 database binding
- * @param item  {{id, kind}} — `kind: 'service'` consumes nothing
+ * @param item  {{id, kind}} — `kind: "service"` consumes nothing
  * @param qty   positive integer
  * @returns {Promise<{allocations: Array, cogsPaise: number, statements: Array}>}
  * @throws {InsufficientStock} when the lots cannot cover `qty`
