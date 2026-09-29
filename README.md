@@ -11,20 +11,7 @@ android/                 Gradle project for the APK
 codemagic.yaml           cloud APK build + GitHub Release publishing
 ```
 
-## 1. Backend
 
-Follow [worker/README.md](worker/README.md). Five commands and you have a URL
-plus a token — that's all both clients need.
-
-## 2. Web app
-
-`API_BASE` in [web/index.html](web/index.html) already points at the deployed
-Worker. Paste your `POS_TOKEN` into `API_TOKEN` just below it:
-
-```js
-const API_BASE = 'https://pos-api.saikat212567.workers.dev';
-const API_TOKEN = 'the-till-token-you-set';
-```
 
 Then open the file. No server, no build.
 
