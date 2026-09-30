@@ -23,38 +23,38 @@
  * rewrite the tax settings.
  */
 
-import { lineTax, invoiceTotals, splitExclusive, splitByPlace, normalizeStateCode } from './gst.js';
-import { planConsume, stockReport, lotInsert, InsufficientStock } from './fifo.js';
 import {
-  saleVoucherLines, purchaseVoucherLines, voucherStatements, trialBalance,
+  lineTax, invoiceTotals, splitExclusive, splitByPlace, normalizeStateCode,
+  divRound, roundOff,
+} from './gst.js';
+import { planConsume, lotInsert, InsufficientStock } from './fifo.js';
+import {
+  saleVoucherLines, purchaseVoucherLines, voucherStatements,
   buildVoucher, UnbalancedVoucher, ACC, PAYMENT_MODES, creditNoteVoucherLines,
 } from './ledger.js';
 import { validateItem, Invalid } from './items.js';
 import { putItemImage, getImage } from './images.js';
 import { FORMATS, billHtml } from './bill.js';
 import { gstr1, gstr3b, GstrError, currentPeriod } from './gstr.js';
+import {
+  reportTrialBalance as buildTrialBalance, reportProfitLoss, reportBalanceSheet,
+  reportSalesRegister, reportPurchaseRegister, reportStockRegister,
+  reportStockIntegrity, reportCashBook, reportDayBook, InvalidReportPeriod,
+} from './reports.js';
+import { authenticateRequest, requireAuth, hasPermission } from './auth.js';
+import { planReturn, RefundRejection } from './refunds.js';
 
 const cors = () => ({
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-API-Key',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
 });
 
-const json = (body, status = 200) =>
+export const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json', ...cors() },
   });
-
-/** Constant-time-ish compare so the token check doesn't leak length by timing. */
-function tokenOk(header, secret) {
-  if (!secret) return false;                       // misconfigured: fail closed
-  const got = (header || '').replace(/^Bearer\s+/i, '');
-  if (got.length !== secret.length) return false;
-  let diff = 0;
-  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ secret.charCodeAt(i);
-  return diff === 0;
-}
 
 export default {
   async fetch(request, env) {
@@ -64,113 +64,90 @@ export default {
 
     if (method === 'OPTIONS') return new Response(null, { headers: cors() });
 
-    const header = request.headers.get('Authorization');
+    try {
+      // Only the established till/admin credentials are active. The draft
+      // identity endpoints and their unapplied schema are deliberately deferred.
+      let auth = await authenticateRequest(request, env, env.DB);
+      const queryToken = pathname.startsWith('/images/') ? url.searchParams.get('t') : null;
+      if (!auth && queryToken !== null) {
+        const authorization = `Bearer ${queryToken}`;
+        let imageRequest;
+        try {
+          imageRequest = new Request(request.url, { headers: { Authorization: authorization } });
+          // Reject invalid or header-normalized query values instead of turning
+          // malformed credentials into a 500 or accepting a different token.
+          if (imageRequest.headers.get('Authorization') !== authorization) {
+            return json({ error: 'unauthorized' }, 401);
+          }
+        } catch {
+          return json({ error: 'unauthorized' }, 401);
+        }
+        const imageAuth = await authenticateRequest(imageRequest, env, env.DB);
+        // An admin credential must never be accepted in a URL.
+        if (imageAuth?.authType === 'legacy_till') auth = imageAuth;
+      }
+      const adminOnly = auth && hasPermission(auth.permissions, 'admin.all');
+      const route = (path, m, requiredPerm, handler) =>
+        pathname === path && method === m
+          ? requireAuth(auth, requiredPerm) ?? handler()
+          : null;
 
-    // An <img src="..."> tag cannot send an Authorization header, so image
-    // requests may carry a token as a query parameter instead — but ONLY the till
-    // token, and only on /images/.
-    //
-    // A URL travels further than a header: into Cloudflare logs, proxy logs, and
-    // the Referer of anything the page later links to. The till token is already
-    // public by design (it sits in the web page's source and is extractable from
-    // the APK) and opens only catalog-read and sale-insert, so a product photo
-    // URL carrying it leaks nothing new. The admin token gates the books and the
-    // tax settings, so it must never be accepted here — the admin page used to
-    // put it in every thumbnail src, which quietly broke its own promise to keep
-    // that token in memory only.
-    const queryToken = pathname.startsWith('/images/') ? url.searchParams.get('t') : null;
-    const imageTill = queryToken !== null && tokenOk(`Bearer ${queryToken}`, env.POS_TOKEN);
-
-    // The admin token also works on till routes, so one token covers testing.
-    // The reverse is never true. Admin rights come from the header alone.
-    const admin = tokenOk(header, env.POS_ADMIN_TOKEN);
-    const till = tokenOk(header, env.POS_TOKEN) || admin || imageTill;
-
-    const route = (path, m, needsAdmin, handler) =>
-      pathname === path && method === m
-        ? (needsAdmin ? admin : till)
-          ? handler()
-          : json({ error: 'unauthorized' }, 401)
-        : null;
-
-    /**
-     * Same, for a path with one trailing id segment: '/items/:id/image'.
-     *
-     * `pattern` is split on '/' and compared segment by segment, with ':name'
-     * capturing. A regex would be shorter to write and harder to read, and this
-     * API has five such routes, not fifty.
-     */
-    const routeId = (pattern, m, needsAdmin, handler) => {
-      if (method !== m) return null;
-      const want = pattern.split('/');
-      const got = pathname.split('/');
-      if (want.length !== got.length) return null;
-
-      // Authorise BEFORE decoding. decodeURIComponent throws URIError on a
-      // malformed escape like "%", so decoding first let an unauthenticated
-      // request reach the outer catch and get a 500 instead of a 401 — an
-      // unauthenticated caller provoking an error response, and a misleading one
-      // for anyone reading logs.
-      if (!(needsAdmin ? admin : till)) return json({ error: 'unauthorized' }, 401);
-
-      const params = {};
-      for (let i = 0; i < want.length; i++) {
-        if (want[i].startsWith(':')) {
-          if (!got[i]) return null;
+      const routeId = (pattern, m, requiredPerm, handler) => {
+        if (method !== m) return null;
+        const want = pattern.split('/');
+        const got = pathname.split('/');
+        if (want.length !== got.length) return null;
+        // Match the complete raw path first, so an unrelated route cannot
+        // intercept this request with its own permission requirement.
+        if (want.some((part, i) => part.startsWith(':') ? !got[i] : part !== got[i])) return null;
+        const authErr = requireAuth(auth, requiredPerm);
+        if (authErr) return authErr;
+        const params = {};
+        for (let i = 0; i < want.length; i++) {
+          if (!want[i].startsWith(':')) continue;
           try {
             params[want[i].slice(1)] = decodeURIComponent(got[i]);
           } catch {
-            // A malformed escape is a bad request, not a server fault.
             return json({ error: 'malformed path' }, 400);
           }
-        } else if (want[i] !== got[i]) return null;
-      }
-      return handler(params);
-    };
+        }
+        return handler(params);
+      };
 
-    try {
-      // `await` matters: returning the handler's promise unawaited would let
-      // any async failure escape this try/catch entirely, and the client would
-      // get a Cloudflare error page instead of the JSON both clients parse.
       return await (
-        route('/products', 'GET', false, () => listProducts(env)) ??
-        // ?all=1 includes deactivated items. Admin-only: a till must not be
-        // able to sell something that was taken off the catalog.
-        route('/items', 'GET', false, () => listItems(env, {
-          includeInactive: admin && url.searchParams.get('all') === '1',
+        route('/products', 'GET', 'inventory.read', () => listProducts(env)) ??
+        route('/items', 'GET', 'inventory.read', () => listItems(env, {
+          includeInactive: adminOnly && url.searchParams.get('all') === '1',
         })) ??
-        route('/sales', 'POST', false, () => recordSale(request, env)) ??
-        route('/sales', 'GET', true, () => listSales(url, env)) ??
-        route('/purchases', 'POST', true, () => recordPurchase(request, env)) ??
-        route('/reports/stock', 'GET', true, () => reportStock(env)) ??
-        route('/reports/trial-balance', 'GET', true, () => reportTrialBalance(url, env)) ??
-        route('/credit-notes', 'POST', true, () => recordCreditNote(request, env)) ??
-        route('/reports/gstr1', 'GET', true, () => reportGstr(url, env, gstr1)) ??
-        route('/reports/gstr3b', 'GET', true, () => reportGstr(url, env, gstr3b)) ??
-        route('/settings', 'GET', true, () => getSettings(env)) ??
-        route('/settings', 'PUT', true, () => putSettings(request, env)) ??
-        // Till-readable. The pricing mode and rounding rule decide what the
-        // counter sees on screen, so a client cannot draw a correct cart without
-        // them.
-        route('/shop', 'GET', false, () => getShop(env)) ??
-
-        // --- phase 2 ---
-        route('/items', 'POST', true, () => createItem(request, env)) ??
-        routeId('/items/:id', 'PATCH', true, p => updateItem(p.id, request, env)) ??
-        routeId('/items/:id', 'DELETE', true, p => deactivateItem(p.id, env)) ??
-        routeId('/items/:id/image', 'POST', true, p => uploadItemImage(p.id, request, env)) ??
-        routeId('/items/:id/opening-stock', 'POST', true,
-          p => addOpeningStock(p.id, request, env)) ??
-        // Images are read by the till, and by an <img> tag that cannot send an
-        // Authorization header — see the note on the handler.
-        routeId('/images/items/:id', 'GET', false, p => getImage(env, `items/${p.id}`, cors)) ??
-        // Reprinting a bill needs the sale and its lines.
-        routeId('/sales/:ref', 'GET', false, p => getSale(p.ref, url, env)) ??
-
-        (till ? json({ error: 'not found' }, 404) : json({ error: 'unauthorized' }, 401))
+        route('/sales', 'POST', 'sales.create', () => recordSale(request, env)) ??
+        route('/sales', 'GET', 'sales.read', () => listSales(url, env)) ??
+        route('/purchases', 'POST', 'purchases.create', () => recordPurchase(request, env)) ??
+        route('/reports/stock', 'GET', 'reports.view', () => reportStock(url, env)) ??
+        route('/reports/trial-balance', 'GET', 'reports.view', () => reportResponse(url, env, buildTrialBalance)) ??
+        route('/reports/profit-loss', 'GET', 'reports.view', () => reportResponse(url, env, reportProfitLoss)) ??
+        route('/reports/balance-sheet', 'GET', 'reports.view', () => reportResponse(url, env, reportBalanceSheet)) ??
+        route('/reports/sales-register', 'GET', 'reports.view', () => reportResponse(url, env, reportSalesRegister)) ??
+        route('/reports/purchase-register', 'GET', 'reports.view', () => reportResponse(url, env, reportPurchaseRegister)) ??
+        route('/reports/cash-book', 'GET', 'reports.view', () => reportResponse(url, env, reportCashBook)) ??
+        route('/reports/day-book', 'GET', 'reports.view', () => reportResponse(url, env, reportDayBook)) ??
+        route('/reports/integrity/stock', 'GET', 'reports.view', () => reportResponse(url, env, reportStockIntegrity)) ??
+        route('/credit-notes', 'POST', 'sales.refund', () => recordCreditNoteAtomic(request, env)) ??
+        route('/reports/gstr1', 'GET', 'reports.gstr', () => reportGstr(url, env, gstr1)) ??
+        route('/reports/gstr3b', 'GET', 'reports.gstr', () => reportGstr(url, env, gstr3b)) ??
+        route('/settings', 'GET', 'settings.read', () => getSettings(env)) ??
+        route('/settings', 'PUT', 'settings.write', () => putSettings(request, env)) ??
+        route('/shop', 'GET', null, () => getShop(env)) ??
+        route('/items', 'POST', 'inventory.write', () => createItem(request, env)) ??
+        routeId('/items/:id', 'PATCH', 'inventory.write', p => updateItem(p.id, request, env)) ??
+        routeId('/items/:id', 'DELETE', 'inventory.write', p => deactivateItem(p.id, env)) ??
+        routeId('/items/:id/image', 'POST', 'inventory.write', p => uploadItemImage(p.id, request, env)) ??
+        routeId('/items/:id/opening-stock', 'POST', 'inventory.write', p => addOpeningStock(p.id, request, env)) ??
+        routeId('/images/items/:id', 'GET', 'inventory.read', p => getImage(env, `items/${p.id}`, cors)) ??
+        routeId('/sales/:ref', 'GET', 'sales.print', p => getSale(p.ref, url, env)) ??
+        (auth ? json({ error: 'not found' }, 404) : json({ error: 'unauthorized' }, 401))
       );
     } catch (err) {
-      // Log for `wrangler tail`; don't leak internals to the client.
+      if (err instanceof InvalidReportPeriod) return json({ error: err.message }, 400);
       console.error('unhandled', err);
       return json({ error: 'internal error' }, 500);
     }
@@ -267,12 +244,10 @@ async function putSettings(request, env) {
   if (body.bill_format && !FORMATS.includes(body.bill_format)) {
     return json({ error: `bill_format must be one of: ${FORMATS.join(', ')}` }, 400);
   }
-  // The seller's own state decides the tax head on every sale, so a bad value
-  // here is worse than a bad place_of_supply on one invoice — it misroutes all of
-  // them. Validated at the write so it cannot be stored wrong in the first place.
   if (body.state_code !== undefined && !normalizeStateCode(body.state_code)) {
     return json({ error: 'state_code must be a GST state code: 01-38, 97 or 99' }, 400);
   }
+
   // fy_start is parsed by fyLabel with split('-').map(Number), so "2026-04-01"
   // or "April" yields NaN and silently files every sale into the wrong financial
   // year — while continuing to advance the closed year's invoice counter.
@@ -291,12 +266,13 @@ async function putSettings(request, env) {
   }
   if (!entries.length) return json({ error: 'no settings given' }, 400);
 
-  await env.DB.batch(entries.map(([k, v]) =>
-    env.DB.prepare(
-      `INSERT INTO settings (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-    ).bind(k, settingValue(k, v))
-  ));
+  // Preserve the legacy transaction until identity and atomic auditing have a
+  // reviewed schema. A separate draft audit insert could fail after this write.
+  const stmt = env.DB.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  );
+  await env.DB.batch(entries.map(([k, v]) => stmt.bind(k, settingValue(k, v))));
 
   return json(await loadSettings(env));
 }
@@ -955,7 +931,7 @@ async function recordSale(request, env) {
           gst_rate_bps, taxable_paise, cgst_paise, sgst_paise, igst_paise, cogs_paise,
           qty_returnable, taxable_returnable_paise, cgst_returnable_paise,
           sgst_returnable_paise, igst_returnable_paise)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       client_ref, l.product.id, l.product.name, l.product.kind,
       l.product.tax_code, l.product.unit, l.qty, l.product.price,
@@ -1236,7 +1212,9 @@ async function recordPurchase(request, env) {
 // Reports
 // ===========================================================================
 
-async function recordCreditNote(request, env) {
+// Deferred draft retained for comparison only; the route uses the schema-correct
+// atomic writer below. Do not call this unfinished implementation.
+async function recordCreditNoteDeferredDraft(request, env) {
   // Idempotent: client_ref PRIMARY KEY, duplicate yields 200 {ok:true,duplicate:true}
   let body;
   try {
@@ -1472,22 +1450,467 @@ async function recordCreditNote(request, env) {
   return json({ ok: true, credit_note_no: creditNoteNo }, 201);
 }
 
-async function reportStock(env) {
-  const rows = await stockReport(env.DB);
-  return json({
-    items: rows,
-    totalValuePaise: rows.reduce((s, r) => s + r.value_paise, 0),
-  });
+const REFUND_REASONS = new Set(['return', 'deficient', 'price_correction']);
+const STOCK_RETURN_MODES = new Set(['original_lot', 'new_lot', 'none']);
+
+function refundDate(value) {
+  if (value === undefined || value === null || value === '') return new Date();
+  if (typeof value !== 'string') return null;
+  const input = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? `${value}T00:00:00+05:30`
+    : /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+      ? `${value.replace(' ', 'T')}Z`
+      : value;
+  const date = new Date(input);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-async function reportTrialBalance(url, env) {
-  const tb = await trialBalance(env.DB, {
-    from: url.searchParams.get('from'),
-    to: url.searchParams.get('to'),
+function dbDate(date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function istDateKey(date) {
+  const local = new Date(date.getTime() + IST_OFFSET_MINUTES * 60_000);
+  return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(local.getUTCDate()).padStart(2, '0')}`;
+}
+
+function safePortion(value, part, whole) {
+  if (!Number.isSafeInteger(value) || value < 0 ||
+      !Number.isSafeInteger(part) || part < 0 ||
+      !Number.isSafeInteger(whole) || whole <= 0 || part > whole) {
+    throw new RefundRejection('credit-note figures are outside the safe integer range');
+  }
+  if (part === whole || value === 0 || part === 0) return part === 0 ? 0 : value;
+  const product = value * part;
+  const half = Math.floor(whole / 2);
+  if (!Number.isSafeInteger(product) || product > Number.MAX_SAFE_INTEGER - half) {
+    throw new RefundRejection('credit-note arithmetic exceeds safe integer range');
+  }
+  return divRound(product, whole);
+}
+
+function safeAdd(a, b, message = 'credit-note arithmetic exceeds safe integer range') {
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) ||
+      b > 0 && a > Number.MAX_SAFE_INTEGER - b ||
+      b < 0 && a < Number.MIN_SAFE_INTEGER - b) {
+    throw new RefundRejection(message);
+  }
+  return a + b;
+}
+
+// GST/reporting buckets stay explicitly commercial until a reviewed sale-level
+// registration/state snapshot and cutoff policy are available. This writer does
+// not claim to adjust a filed return.
+function creditNoteBucket() {
+  return 'none';
+}
+
+function saleLineSnapshotStatements(db, saleRef, line) {
+  const snapshot = [
+    line.qty_returnable, line.taxable_returnable_paise,
+    line.cgst_returnable_paise, line.sgst_returnable_paise,
+    line.igst_returnable_paise,
+  ];
+  return [
+    // Fresh snapshot emits no row. A stale or missing snapshot attempts qty=0,
+    // and the existing sale_lines CHECK(qty > 0) aborts the whole batch.
+    db.prepare(`
+      INSERT INTO sale_lines
+        (sale_ref, product_id, name, qty, price_paise,
+         qty_returnable, taxable_returnable_paise, cgst_returnable_paise,
+         sgst_returnable_paise, igst_returnable_paise)
+      SELECT ?, product_id, name, 0, 0, 0, 0, 0, 0, 0
+        FROM sale_lines
+       WHERE id = ? AND sale_ref = ?
+         AND NOT (qty_returnable = ? AND taxable_returnable_paise = ?
+           AND cgst_returnable_paise = ? AND sgst_returnable_paise = ?
+           AND igst_returnable_paise = ?)
+    `).bind(saleRef, line.sale_line_id, saleRef, ...snapshot),
+    db.prepare(`
+      UPDATE sale_lines
+         SET qty_returnable = qty_returnable - ?,
+             taxable_returnable_paise = taxable_returnable_paise - ?,
+             cgst_returnable_paise = cgst_returnable_paise - ?,
+             sgst_returnable_paise = sgst_returnable_paise - ?,
+             igst_returnable_paise = igst_returnable_paise - ?
+       WHERE id = ? AND sale_ref = ?
+    `).bind(
+      line.qty, line.taxable_paise, line.cgst_paise, line.sgst_paise,
+      line.igst_paise, line.sale_line_id, saleRef,
+    ),
+  ];
+}
+
+/**
+ * Create one credit note and its reversing journal in one D1 batch.
+ *
+ * The planner is deliberately run once per line before the batch is built. Its
+ * snapshot assertions, the sale-line snapshot update, physical stock changes,
+ * document rows and voucher all execute in the same transaction. A stale read
+ * therefore aborts the whole note instead of committing a partial refund.
+ */
+async function recordCreditNoteAtomic(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'malformed json' }, 400);
+  }
+
+  const {
+    client_ref,
+    original_sale_ref,
+    lines,
+    refund_mode = 'cash',
+    stock_return_mode,
+    tax_adjusted = 0,
+    reason = 'return',
+    narration = '',
+    note_date,
+    actor_id,
+    business_date,
+    source = 'web',
+  } = body ?? {};
+
+  if (typeof client_ref !== 'string' || client_ref.length < 1 || client_ref.length > 255)
+    return json({ error: 'client_ref must be a string (1-255 chars)' }, 400);
+  if (typeof original_sale_ref !== 'string' || original_sale_ref.length < 1)
+    return json({ error: 'original_sale_ref must be a string' }, 400);
+  if (!Array.isArray(lines) || lines.length === 0 || lines.length > 200)
+    return json({ error: 'lines must be a non-empty array (max 200)' }, 400);
+  if (!PAYMENT_MODES.includes(refund_mode))
+    return json({ error: `refund_mode must be one of ${PAYMENT_MODES.join(', ')}` }, 400);
+  if (stock_return_mode !== undefined && !STOCK_RETURN_MODES.has(stock_return_mode))
+    return json({ error: 'stock_return_mode must be original_lot, new_lot, or none' }, 400);
+  if (tax_adjusted !== 0)
+    return json({ error: 'GST-adjusting credit notes are disabled until original-sale tax evidence is stored and approved' }, 409);
+  if (!REFUND_REASONS.has(reason))
+    return json({ error: 'reason must be return, deficient, or price_correction' }, 400);
+  if (source !== 'web' && source !== 'android')
+    return json({ error: 'source must be web or android' }, 400);
+
+  const seenLineIds = new Set();
+  for (const line of lines) {
+    if (!Number.isSafeInteger(line?.sale_line_id) || line.sale_line_id <= 0 ||
+        !Number.isSafeInteger(line?.qty) || line.qty <= 0) {
+      return json({ error: 'each line needs a positive safe-integer sale_line_id and qty' }, 400);
+    }
+    if (seenLineIds.has(line.sale_line_id))
+      return json({ error: `sale line ${line.sale_line_id} appears more than once` }, 400);
+    seenLineIds.add(line.sale_line_id);
+  }
+
+  // Return the original result before planning. A lost response can be
+  // retried after the counters are exhausted; idempotency must not turn that
+  // safe retry into an over-return conflict.
+  const existingNote = await env.DB.prepare(
+    'SELECT note_no FROM credit_notes WHERE client_ref = ?'
+  ).bind(client_ref).first();
+  if (existingNote) return json({ ok: true, duplicate: true, credit_note_no: existingNote.note_no }, 200);
+
+  const issuedDate = refundDate(note_date ?? business_date);
+  if (!issuedDate) return json({ error: 'note_date must be a valid date' }, 400);
+
+  const settings = await getSettingsForTransaction(env.DB);
+  const effectiveStockMode = stock_return_mode ?? settings.stock_return_mode ?? 'original_lot';
+  if (effectiveStockMode !== 'original_lot')
+    return json({ error: 'only original_lot credit notes are enabled; damage/new-lot workflows require separate reviewed policy' }, 409);
+
+  const series = settings.credit_note_series ?? 'CN';
+  if (!/^[A-Za-z0-9/-]{1,6}$/.test(series) || series.length + 11 > 16)
+    return json({ error: 'credit_note_series would produce a document number longer than 16 characters' }, 500);
+  const fy = fyLabel(issuedDate, settings.fy_start ?? '04-01');
+
+  const sale = await env.DB.prepare(`
+    SELECT client_ref, total, sold_at, invoice_no, taxable_paise, cgst_paise,
+           sgst_paise, igst_paise, round_off_paise, total_paise, place_of_supply,
+           customer_gstin, payment_mode
+      FROM sales WHERE client_ref = ?
+  `).bind(original_sale_ref).first();
+  if (!sale) return json({ error: `sale ${original_sale_ref} does not exist` }, 404);
+
+  const supplyDate = refundDate(sale.sold_at);
+  if (!supplyDate) return json({ error: 'original sale has an invalid supply date' }, 500);
+  if (issuedDate < supplyDate)
+    return json({ error: 'note_date cannot precede the original supply date' }, 400);
+  if (!sale.invoice_no || !normalizeStateCode(sale.place_of_supply))
+    return json({ error: 'original sale lacks required invoice and place-of-supply evidence' }, 409);
+
+  const { results: saleLines } = await env.DB.prepare(`
+    SELECT id AS sale_line_id, product_id, name, kind, tax_code, unit, qty,
+           price_paise, gst_rate_bps, taxable_paise, cgst_paise, sgst_paise,
+           igst_paise, cogs_paise, qty_returnable, taxable_returnable_paise,
+           cgst_returnable_paise, sgst_returnable_paise, igst_returnable_paise
+      FROM sale_lines WHERE sale_ref = ? ORDER BY id
+  `).bind(original_sale_ref).all();
+  const saleLinesById = new Map(saleLines.map(line => [line.sale_line_id, line]));
+
+  const plannedLines = [];
+  let goodsTaxablePaise = 0;
+  let serviceTaxablePaise = 0;
+  let cgstPaise = 0;
+  let sgstPaise = 0;
+  let igstPaise = 0;
+  let cogsReversedPaise = 0;
+
+  for (const requested of lines) {
+    const stored = saleLinesById.get(requested.sale_line_id);
+    if (!stored) return json({ error: `sale line ${requested.sale_line_id} not found or does not belong to the given sale` }, 404);
+    for (const key of ['qty_returnable', 'taxable_returnable_paise', 'cgst_returnable_paise', 'sgst_returnable_paise', 'igst_returnable_paise']) {
+      if (!Number.isSafeInteger(stored[key]) || stored[key] < 0)
+        return json({ error: `sale line ${requested.sale_line_id} has invalid returnable figures` }, 409);
+    }
+    if (requested.qty > stored.qty_returnable)
+      return json({ error: `insufficient returnable quantity (have ${stored.qty_returnable}, want ${requested.qty})` }, 409);
+
+    let plan = { allocations: [], cogsPaise: 0, statements: [] };
+    if (stored.kind === 'good') {
+      try {
+        plan = await planReturn(env.DB, stored.sale_line_id, requested.qty);
+      } catch (error) {
+        if (error instanceof RefundRejection)
+          return json({ error: error.message }, error.status === 400 ? 409 : error.status);
+        throw error;
+      }
+    }
+
+    const taxable = safePortion(stored.taxable_returnable_paise, requested.qty, stored.qty_returnable);
+    const cgst = safePortion(stored.cgst_returnable_paise, requested.qty, stored.qty_returnable);
+    const sgst = safePortion(stored.sgst_returnable_paise, requested.qty, stored.qty_returnable);
+    const igst = safePortion(stored.igst_returnable_paise, requested.qty, stored.qty_returnable);
+    if (stored.kind === 'good') goodsTaxablePaise = safeAdd(goodsTaxablePaise, taxable);
+    else if (stored.kind === 'service') serviceTaxablePaise = safeAdd(serviceTaxablePaise, taxable);
+    else return json({ error: `sale line ${stored.sale_line_id} has an invalid kind` }, 409);
+    cgstPaise = safeAdd(cgstPaise, cgst);
+    sgstPaise = safeAdd(sgstPaise, sgst);
+    igstPaise = safeAdd(igstPaise, igst);
+    cogsReversedPaise = safeAdd(cogsReversedPaise, plan.cogsPaise);
+    plannedLines.push({
+      stored, sale_line_id: stored.sale_line_id, qty: requested.qty,
+      taxable_paise: taxable, cgst_paise: cgst, sgst_paise: sgst, igst_paise: igst,
+      plan,
+    });
+  }
+
+  const taxablePaise = safeAdd(goodsTaxablePaise, serviceTaxablePaise);
+  const taxPaise = safeAdd(safeAdd(cgstPaise, sgstPaise), igstPaise);
+  const beforeRound = safeAdd(taxablePaise, taxPaise);
+  const returned = await env.DB.prepare(
+    'SELECT COALESCE(SUM(total_paise), 0) AS total_paise FROM credit_notes WHERE sale_ref = ?'
+  ).bind(original_sale_ref).first();
+  if (!Number.isSafeInteger(returned.total_paise) || returned.total_paise < 0)
+    return json({ error: 'existing credit-note totals are invalid' }, 500);
+  const originalTotal = Number.isSafeInteger(sale.total_paise) ? sale.total_paise : sale.total;
+  if (!Number.isSafeInteger(originalTotal) || originalTotal < 0)
+    return json({ error: 'original sale total is invalid' }, 500);
+  const remainingInvoiceTotal = originalTotal - returned.total_paise;
+  if (remainingInvoiceTotal < 0) return json({ error: 'existing credit notes exceed the original sale total' }, 409);
+
+  const requestedIds = new Set(plannedLines.map(line => line.sale_line_id));
+  const finalReturn = saleLines.every(line => {
+    if (!requestedIds.has(line.sale_line_id)) return line.qty_returnable === 0;
+    const planned = plannedLines.find(candidate => candidate.sale_line_id === line.sale_line_id);
+    return line.qty_returnable - planned.qty === 0;
   });
-  // `balanced` is the point of the whole exercise: if it is ever false,
-  // something wrote to voucher_lines without going through buildVoucher.
-  return json({ ...tb, balanced: tb.net === 0 });
+  let totalPaise;
+  let roundOffPaise;
+  if (finalReturn) {
+    totalPaise = remainingInvoiceTotal;
+    roundOffPaise = totalPaise - beforeRound;
+  } else {
+    const rounded = roundOff(beforeRound, settings.round_off_enabled !== '0');
+    totalPaise = rounded.total;
+    roundOffPaise = rounded.adjustment;
+    if (totalPaise > remainingInvoiceTotal)
+      return json({ error: 'credit-note rounding exceeds the remaining invoice total' }, 409);
+  }
+  if (!Number.isSafeInteger(totalPaise) || totalPaise < 0 || !Number.isSafeInteger(roundOffPaise))
+    return json({ error: 'credit-note total is outside the safe integer range' }, 400);
+
+  const registration = settings.gst_registration ?? 'regular';
+  const gstr1Table = creditNoteBucket(sale, registration, tax_adjusted, settings);
+  if (!gstr1Table) return json({ error: 'b2cl_threshold_paise setting is invalid' }, 500);
+  let voucher;
+  try {
+    voucher = creditNoteVoucherLines({
+      totalPaise, goodsTaxablePaise, serviceTaxablePaise,
+      cgstPaise, sgstPaise, igstPaise, roundOffPaise,
+      cogsReversedPaise, stockReturnMode: effectiveStockMode,
+      taxAdjusted: tax_adjusted, paymentMode: sale.payment_mode,
+      refundMode: refund_mode, registration,
+    });
+  } catch (error) {
+    if (error instanceof UnbalancedVoucher)
+      return json({ error: 'credit note figures do not balance' }, 400);
+    throw error;
+  }
+
+  const noteDateDb = dbDate(issuedDate);
+  const originalInvoiceDate = sale.sold_at;
+  const businessDate = business_date ?? istDateKey(issuedDate);
+  const noteNo = `(SELECT ? || '/' || ? || '/' || printf('%04d', last_no)
+    FROM invoice_series WHERE series = ? AND fy = ?)`;
+  const statements = [
+    env.DB.prepare(`
+      INSERT INTO invoice_series (series, fy, last_no) VALUES (?, ?, 1)
+      ON CONFLICT(series, fy) DO UPDATE SET last_no = last_no + 1
+    `).bind(series, fy),
+    env.DB.prepare(`
+      INSERT INTO credit_notes
+        (client_ref, source, note_no, note_date, sale_ref, original_invoice_no,
+         original_invoice_date, reason, registration, place_of_supply, customer_gstin,
+         customer_registered, taxable_paise, cgst_paise, sgst_paise, igst_paise,
+         round_off_paise, total_paise, cogs_reversed_paise, stock_return_mode,
+         tax_adjusted, gstr1_table, refund_mode, actor_id, business_date)
+      VALUES (?, ?, ${noteNo}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      client_ref, source, series, fy, series, fy, noteDateDb, original_sale_ref,
+      sale.invoice_no ?? null, originalInvoiceDate, reason, registration,
+      sale.place_of_supply ?? null, sale.customer_gstin ?? null,
+      String(sale.customer_gstin ?? '').trim() ? 1 : 0,
+      taxablePaise, cgstPaise, sgstPaise, igstPaise, roundOffPaise, totalPaise,
+      cogsReversedPaise, effectiveStockMode, tax_adjusted, gstr1Table, refund_mode,
+      actor_id ?? null, businessDate,
+    ),
+    ...plannedLines.map(line => env.DB.prepare(`
+      INSERT INTO credit_note_lines
+        (note_ref, sale_line_id, product_id, name, kind, tax_code, unit, qty,
+         price_paise, gst_rate_bps, taxable_paise, cgst_paise, sgst_paise,
+         igst_paise, cogs_reversed_paise)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      client_ref, line.sale_line_id, line.stored.product_id, line.stored.name,
+      line.stored.kind, line.stored.tax_code, line.stored.unit, line.qty,
+      line.stored.price_paise, line.stored.gst_rate_bps, line.taxable_paise,
+      line.cgst_paise, line.sgst_paise, line.igst_paise, line.plan.cogsPaise,
+    )),
+    // Return totals are a second concurrency boundary: line counters prevent
+    // double-returning one line, while this assertion prevents separately
+    // planned notes on different lines from exceeding the invoice total.
+    env.DB.prepare(`
+      INSERT INTO sale_lines (sale_ref, product_id, name, qty, price_paise)
+      SELECT s.client_ref, sl.product_id, sl.name, 0, 0
+        FROM sales s JOIN sale_lines sl ON sl.sale_ref = s.client_ref
+       WHERE s.client_ref = ?
+         AND COALESCE((SELECT SUM(total_paise) FROM credit_notes WHERE sale_ref = s.client_ref), 0)
+             > COALESCE(s.total_paise, s.total)
+    `).bind(original_sale_ref),
+    ...plannedLines.flatMap(line => saleLineSnapshotStatements(env.DB, original_sale_ref, {
+      sale_line_id: line.sale_line_id,
+      qty: line.qty,
+      qty_returnable: line.stored.qty_returnable,
+      taxable_returnable_paise: line.stored.taxable_returnable_paise,
+      cgst_returnable_paise: line.stored.cgst_returnable_paise,
+      sgst_returnable_paise: line.stored.sgst_returnable_paise,
+      igst_returnable_paise: line.stored.igst_returnable_paise,
+      taxable_paise: line.taxable_paise,
+      cgst_paise: line.cgst_paise,
+      sgst_paise: line.sgst_paise,
+      igst_paise: line.igst_paise,
+    })),
+  ];
+
+  for (const line of plannedLines) {
+    for (const allocation of line.plan.allocations) {
+      const lot = await env.DB.prepare(`
+        SELECT product_id, purchase_line_id, received_at
+          FROM stock_lots WHERE id = ?
+      `).bind(allocation.lot_id).first();
+      if (!lot || lot.product_id !== line.stored.product_id)
+        return json({ error: `return allocation ${allocation.cogs_allocation_id} has invalid stock provenance` }, 409);
+
+      if (effectiveStockMode === 'original_lot') {
+        statements.push(env.DB.prepare(`
+          UPDATE stock_lots
+             SET qty_remaining = qty_remaining + ?,
+                 cost_remaining_paise = cost_remaining_paise + ?
+           WHERE id = ?
+        `).bind(allocation.qty, allocation.cost_paise, allocation.lot_id));
+        statements.push(env.DB.prepare(`
+          INSERT INTO return_allocations
+            (credit_note_line_id, cogs_allocation_id, lot_id, qty, cost_paise, mode)
+          VALUES ((SELECT id FROM credit_note_lines WHERE note_ref = ? AND sale_line_id = ?), ?, ?, ?, ?, ?)
+        `).bind(client_ref, line.sale_line_id, allocation.cogs_allocation_id,
+          allocation.lot_id, allocation.qty, allocation.cost_paise, effectiveStockMode));
+      } else if (effectiveStockMode === 'new_lot') {
+        statements.push(env.DB.prepare(`
+          INSERT INTO stock_lots
+            (product_id, qty_in, qty_remaining, cost_in_paise, cost_remaining_paise,
+             purchase_line_id, received_at)
+          SELECT product_id, ?, ?, ?, ?, purchase_line_id, received_at
+            FROM stock_lots WHERE id = ?
+        `).bind(line.stored.product_id, allocation.qty, allocation.qty,
+          allocation.cost_paise, allocation.cost_paise, allocation.lot_id));
+        statements.push(env.DB.prepare(`
+          INSERT INTO return_allocations
+            (credit_note_line_id, cogs_allocation_id, lot_id, qty, cost_paise, mode)
+          VALUES ((SELECT id FROM credit_note_lines WHERE note_ref = ? AND sale_line_id = ?),
+                  ?, (SELECT MAX(id) FROM stock_lots), ?, ?, ?)
+        `).bind(client_ref, line.sale_line_id, allocation.cogs_allocation_id,
+          allocation.qty, allocation.cost_paise, effectiveStockMode));
+      } else {
+        statements.push(env.DB.prepare(`
+          INSERT INTO return_allocations
+            (credit_note_line_id, cogs_allocation_id, lot_id, qty, cost_paise, mode)
+          VALUES ((SELECT id FROM credit_note_lines WHERE note_ref = ? AND sale_line_id = ?), ?, NULL, ?, ?, ?)
+        `).bind(client_ref, line.sale_line_id, allocation.cogs_allocation_id,
+          allocation.qty, allocation.cost_paise, effectiveStockMode));
+      }
+      statements.push(...line.plan.statements.splice(0, 2));
+    }
+  }
+
+  statements.push(...voucherStatements(
+    env.DB,
+    { type: 'credit_note', ref: client_ref, narration: narration || `Credit note against ${sale.invoice_no ?? original_sale_ref}`, date: noteDateDb },
+    voucher.lines,
+  ));
+
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    if (/UNIQUE constraint failed|PRIMARY KEY/i.test(error.message ?? '')) {
+      const existing = await env.DB.prepare(
+        'SELECT note_no FROM credit_notes WHERE client_ref = ?'
+      ).bind(client_ref).first();
+      if (existing) return json({ ok: true, duplicate: true, credit_note_no: existing.note_no }, 200);
+      console.error('credit note rolled back on a constraint other than client_ref', client_ref, error);
+      return json({ error: 'credit note not recorded' }, 500);
+    }
+    if (/CHECK constraint failed/i.test(error.message ?? '')) {
+      return json({ error: 'returnable figures changed; refresh the sale and retry', retryable: false }, 409);
+    }
+    throw error;
+  }
+
+  const created = await env.DB.prepare(
+    'SELECT note_no FROM credit_notes WHERE client_ref = ?'
+  ).bind(client_ref).first();
+  return json({ ok: true, credit_note_no: created.note_no }, 201);
+}
+
+function reportOptions(url) {
+  // Missing dates use builder defaults; an explicitly empty date is invalid.
+  return Object.fromEntries(['from', 'to', 'as_of']
+    .filter(key => url.searchParams.has(key))
+    .map(key => [key, url.searchParams.get(key)]));
+}
+
+async function reportResponse(url, env, builder) {
+  return json(await builder(env.DB, reportOptions(url)));
+}
+
+async function reportStock(url, env) {
+  const report = await reportStockRegister(env.DB, reportOptions(url));
+  const live = new Map((report.current_lots ?? []).map(row => [row.id, row]));
+  const items = report.items.map(row => ({
+    ...row,
+    // Existing clients read live physical carrying values. Historical queries
+    // use reconstructed closing figures; keep reconciliation visible in both.
+    qty: live.get(row.id)?.qty ?? row.closing_qty,
+    value_paise: live.get(row.id)?.value_paise ?? row.closing_value_paise,
+  }));
+  return json({ ...report, items, totalValuePaise: items.reduce((sum, row) => sum + row.value_paise, 0) });
 }
 
 /**
