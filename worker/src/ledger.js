@@ -174,7 +174,7 @@ export function purchaseVoucherLines({ taxable, cgst, sgst, igst, total, payment
  * @param totalPaise - amount actually refunded, after rounding (positive magnitude)
  * @param taxablePaise, cgstPaise, sgstPaise, igstPaise - each a positive magnitude
  * @param cogsReversedPaise - cost put back into lots (positive)
- * @param paymentMode - how the money goes back (sale.payment_mode possibly overridden)
+ * @param paymentMode - original sale mode (context only; never selects refund settlement)
  * @param refundMode - how the money actually went back (credit_note.refund_mode)
  * @param stockReturnMode - 'original_lot', 'new_lot', 'none'
  * @param taxAdjusted - 0 if GST cannot be reversed, 1 if it can
@@ -195,15 +195,15 @@ export function creditNoteVoucherLines({
   refundMode,              // how cash goes back (may differ)
   registration,
 }) {
+  // Require a literal supported mode: object-key coercion or inherited names
+  // must not turn malformed input into a settlement account.
+  if (!PAYMENT_MODES.includes(refundMode)) throw new Error('unknown refund mode');
   const lines = [];
 
-  // Money goes back.
-  // If refundMode differs from sale's paymentMode, we still debit the same
-  // settlement account — the sale's original account — because that is where
-  // the money was received. A card‑sale cash‑refund increases Cash in Hand
-  // and decreases the original settlement (Bank for card), which nets to the
-  // correct movement.
-  lines.push(cr(settlementAccount(paymentMode), totalPaise));
+  // Credit the account actually used for this refund. A card-origin sale
+  // refunded in cash reduces Cash, not Bank; no fictitious transfer is needed.
+  // Missing/unknown refund modes must fail, not fall back to the sale's mode.
+  lines.push(cr(settlementAccount(refundMode), totalPaise));
 
   // Revenue is debited.
   lines.push(dr(ACC.SALES, goodsTaxablePaise));
@@ -295,11 +295,14 @@ export function voucherStatements(db, { type, ref, narration, date }, lines) {
  * zero; if it ever is not, something wrote to voucher_lines without going
  * through buildVoucher.
  */
-export async function trialBalance(db, { from = null, to = null } = {}) {
+// Calendar-date reports supply to_exclusive; `to` retains the inclusive raw
+// timestamp contract used by legacy callers. Neither path changes postings.
+export async function trialBalance(db, { from = null, to = null, to_exclusive = null } = {}) {
   const where = [];
   const binds = [];
   if (from) { where.push('v.date >= ?'); binds.push(from); }
-  if (to)   { where.push('v.date <= ?'); binds.push(to); }
+  if (to_exclusive) { where.push('v.date < ?'); binds.push(to_exclusive); }
+  else if (to) { where.push('v.date <= ?'); binds.push(to); }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const { results } = await db

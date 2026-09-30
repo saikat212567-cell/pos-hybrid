@@ -1,10 +1,12 @@
 /**
  * Credit note and refund logic.
  *
- * The all-or-nothing batch relies on the same concurrency pattern as
- * recordSale: unguarded decrements with CHECK (>=0) constraints; the
- * loser's UPDATE drives a remainder negative, the CHECK fires, the batch
- * rolls back and the client gets a retryable 409.
+ * Allocation planning is read-only. Its snapshot assertions and decrements
+ * must run together with the document/stock/voucher writes in ONE DB.batch().
+ * A stale assertion raises a constraint error; batch() must roll back every
+ * statement, not catch the error and commit an earlier write.
+ *
+ * The HTTP writer and tax-eligibility helpers below remain deferred drafts.
  */
 import { divRound } from './gst.js';
 import { saleVoucherLines } from './ledger.js';
@@ -51,16 +53,21 @@ function gstr1Bucket(customerGstin, taxablePaise, settings) {
   return 'b2cs_net';
 }
 
+const positiveSafeInteger = value => Number.isSafeInteger(value) && value > 0;
+
 /**
- * Plan the return of qty units from a specific sale line.
+ * Plan allocation-counter consumption for a return, without writing anything.
+ * Reverse the sale's consumption order, not the inventory valuation method.
+ * The last returned unit takes the exact remaining cost, as planConsume does.
  *
- * Walks cogs_allocations in descending id order (LIFO within that line)
- * to put back the exact cost that came out of each lot, applying the
- * same remainder rule as planConsume.
- *
- * Returns {allocations, cogsPaise, statements} ready for D1 batch().
+ * The caller must apply the entire statements array in ONE D1 batch with its
+ * own document, stock-restoration and ledger writes. This planner neither
+ * restores lots nor chooses GST treatment or cumulative refund rounding.
  */
 export async function planReturn(db, saleLineId, qty) {
+  if (!positiveSafeInteger(saleLineId) || !positiveSafeInteger(qty)) {
+    throw new RefundRejection('saleLineId and qty must be positive safe integers');
+  }
   const { results: candidates } = await db.prepare(`
       SELECT id, lot_id, qty_returnable, cost_returnable_paise
         FROM cogs_allocations
@@ -75,11 +82,29 @@ export async function planReturn(db, saleLineId, qty) {
   let cogsPaise = 0;
 
   for (const alloc of candidates) {
-    if (remaining <= 0) break;
+    if (remaining === 0) break;
+    if (!positiveSafeInteger(alloc.id) || !positiveSafeInteger(alloc.lot_id) ||
+        !positiveSafeInteger(alloc.qty_returnable) ||
+        !Number.isSafeInteger(alloc.cost_returnable_paise) || alloc.cost_returnable_paise < 0) {
+      throw new RefundRejection('invalid return allocation state');
+    }
     const take = Math.min(remaining, alloc.qty_returnable);
-    remaining -= take;
-    // divRound as per the lot-remainder rule.
-    const cost = divRound(alloc.cost_returnable_paise * take, alloc.qty_returnable);
+    let cost = alloc.cost_returnable_paise;
+    if (take !== alloc.qty_returnable) {
+      const product = alloc.cost_returnable_paise * take;
+      const half = Math.floor(alloc.qty_returnable / 2);
+      // divRound adds half the denominator before division. Both operations,
+      // not just the final result, must remain within the exact integer range.
+      if (!Number.isSafeInteger(product) || product > Number.MAX_SAFE_INTEGER - half) {
+        throw new RefundRejection('return allocation arithmetic exceeds safe integer range');
+      }
+      cost = divRound(product, alloc.qty_returnable);
+    }
+    if (!Number.isSafeInteger(cost) || cost < 0 || cost > alloc.cost_returnable_paise ||
+        cogsPaise > Number.MAX_SAFE_INTEGER - cost) {
+      throw new RefundRejection('return allocation total exceeds safe integer range');
+    }
+
     allocations.push({
       cogs_allocation_id: alloc.id,
       lot_id: alloc.lot_id,
@@ -87,13 +112,31 @@ export async function planReturn(db, saleLineId, qty) {
       cost_paise: cost,
     });
     cogsPaise += cost;
+    remaining -= take;
     statements.push(
+      // Fresh snapshot: SELECT emits no row, so this inserts nothing and does
+      // not advance allocation IDs. Stale/missing snapshot: qty=0 violates the
+      // existing CHECK(qty > 0). Never use OR IGNORE or a zero-row UPDATE guard:
+      // either could let a caller commit a refund without consuming its cost.
+      db.prepare(`
+        INSERT INTO cogs_allocations
+          (sale_line_id, lot_id, qty, cost_paise, qty_returnable, cost_returnable_paise)
+        SELECT ?, ?, 0, 0, 0, 0
+         WHERE NOT EXISTS (
+           SELECT 1 FROM cogs_allocations
+            WHERE id = ? AND sale_line_id = ? AND lot_id = ?
+              AND qty_returnable = ? AND cost_returnable_paise = ?
+         )
+      `).bind(saleLineId, alloc.lot_id, alloc.id, saleLineId, alloc.lot_id,
+        alloc.qty_returnable, alloc.cost_returnable_paise),
+      // Keep this immediately after its assertion, inside the same batch.
+      // Original qty, cost and provenance remain immutable.
       db.prepare(`
         UPDATE cogs_allocations
            SET qty_returnable = qty_returnable - ?,
                cost_returnable_paise = cost_returnable_paise - ?
-         WHERE id = ?
-      `).bind(take, cost, alloc.id)
+         WHERE id = ? AND sale_line_id = ? AND lot_id = ?
+      `).bind(take, cost, alloc.id, saleLineId, alloc.lot_id)
     );
   }
 
