@@ -4,9 +4,87 @@
 
 **Branch:** `fix/refund-reversal-foundation`
 
-**Base Commit:** `806a8eb` (Merge phase3-gstr: GSTR-1 and GSTR-3B portal JSON export)
+**Current HEAD:** `45222ce` (`chore: record verified recovery checkpoint`)
 
-## Session resumed and verified — 2026-10-01
+**Remote:** `origin/fix/refund-reversal-foundation` is up to date with HEAD.
+
+## Current Handoff — Read This First
+
+### What Is Done
+
+- Phase 2 refund/reversal foundation is implemented and tested.
+- Atomic `POST /credit-notes` creation is implemented in
+  `worker/src/index.js` as `recordCreditNoteAtomic()`.
+- Credit-note creation uses one D1 batch for numbering, document rows, return
+  counters, stock restoration, allocation evidence, and the balanced voucher.
+- Credit-note retries are idempotent through `client_ref`; partial refunds
+  conserve invoice totals, round-off, and FIFO cost; stale plans roll back the
+  entire batch.
+- Legacy till/admin authorization and report HTTP adapters are repaired and
+  covered by regression tests.
+- The staged till Stock/Ledger/Refund panels were removed because they used a
+  till credential for admin-only routes and sent an incompatible refund payload.
+  Existing `admin.html` and `reports.html` remain the supported admin surfaces.
+- Project guidance and this handoff are committed and pushed in `45222ce`.
+
+### Verified Results
+
+| Command | Result |
+|---|---|
+| `cd worker && npm run test:unit` | **236 passed, 0 failed** |
+| Full `npm test` against disposable Wrangler/D1 using migrations `0001`–`0005` only | **363 passed, 0 failed** |
+| `git diff --cached --check` before commit | Passed |
+| Branch push | `origin/fix/refund-reversal-foundation` up to date |
+
+No production or default local database was used. Migration `0006` was not
+applied. The Wrangler process was stopped after testing.
+
+### Intentionally Excluded Local Artifacts
+
+These remain untracked locally and were not committed or pushed:
+
+- `worker/migrations/0006_user_rbac_audit.sql`: unfinished Phase 5 RBAC/audit
+  draft with placeholder credentials and unresolved retention/auth policy.
+- `.claude/worktrees/*`: worktree gitlink/recovery metadata, not product code.
+- `__agent__/`: temporary agent patches and planning state.
+
+Do not run `git add .`. Do not apply migration `0006` without a separately
+approved schema/auth/audit plan.
+
+### Known Limitations
+
+- GST-adjusting credit notes remain disabled because original-sale registration,
+  historical date evidence, GST cutoff/commercial-note policy, and CA review are
+  still unresolved.
+- `new_lot` and `none` stock-return modes remain disabled in the HTTP writer;
+  damage/write-off and ITC reversal require a separate reviewed implementation.
+- Active auth is still the legacy till/admin-token boundary. JWT, API-key, MFA,
+  RBAC, and immutable audit behavior are not enabled or production-certified.
+- UI browser/device, Android, printer, and deployment flows were not exercised.
+- No lint, format, or type-check scripts are configured in `worker/package.json`.
+
+### Next Session Plan
+
+1. Read `AGENTS.md`, this current handoff, `RESUME-HERE.md`, and the relevant
+   Phase 2 spec sections before editing anything.
+2. Confirm branch/status and run the unit suite. Use a fresh disposable D1 with
+   migrations `0001`–`0005` for integration checks; never use default migration
+   commands blindly because `0006` is present locally.
+3. If continuing credit-note work, first obtain approval for the GST/history,
+   commercial-note, damage, and ITC policy decisions. Add a failing endpoint
+   test before changing posting logic or schema.
+4. If repairing the client, build an admin-only refund flow with generated
+   `client_ref`, numeric `sale_line_id`, top-level `stock_return_mode`, and
+   end-to-end idempotency/ledger/stock assertions. Do not expose refunds to the
+   till credential.
+5. Keep RBAC/MFA/audit migration work separately scoped. Do not activate or
+   push migration `0006` as part of Phase 2 stabilization.
+6. After any change, run targeted tests, the full disposable suite, review the
+   diff, update this section, and push only the intended commit.
+
+---
+
+## Historical Checkpoint — 2026-10-01
 
 The atomic credit-note writer is present in committed `f9dff91` and the focused
 endpoint tests are present in `worker/test/credit-note-http.test.js`.
@@ -35,7 +113,7 @@ was made during this resume pass.
 
 ---
 
-## Session parked — 2026-09-30, 02:53 IST
+## Historical Session Parked — 2026-09-30, 02:53 IST
 
 **User instruction:** push only if everything is complete; otherwise update the resume files. The full refund feature is
 **not complete**, so no commit or push was performed. The verified reversal foundation is finished; implementation stopped
@@ -61,7 +139,7 @@ be reconsidered. Do not push to main/master/production, apply migration 0006, or
 
 ---
 
-## Current checkpoint — approved refund reversal foundation verified
+## Historical Checkpoint — approved refund reversal foundation verified
 
 **Scope:** spec Phase 2, §§2, 3.5, 4.4, 5 and 8. User approved the bounded reversal-foundation plan;
 this does **not** activate or complete `POST /credit-notes`, decide GST eligibility, or fix cumulative invoice refund rounding.
