@@ -1,0 +1,672 @@
+# POS Hybrid — Development Progress Tracker
+
+**Last Updated:** 2026-10-01
+
+**Branch:** `fix/refund-reversal-foundation`
+
+**Base Commit:** `806a8eb` (Merge phase3-gstr: GSTR-1 and GSTR-3B portal JSON export)
+
+## Session resumed and verified — 2026-10-01
+
+The atomic credit-note writer is present in committed `f9dff91` and the focused
+endpoint tests are present in `worker/test/credit-note-http.test.js`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `cd worker && npm run test:unit` | **236 passed, 0 failed** |
+| Disposable Wrangler/D1 run using migrations 0001–0005 only | **363 passed, 0 failed** |
+| Owned Wrangler process | Stopped after verification |
+
+The full run exercised sales, reports, GSTR, authentication boundaries, FIFO,
+credit-note creation, idempotency, partial-return conservation, stale-plan
+rollback, and ledger balance. Migration 0006 was not applied. No commit or push
+was made during this resume pass.
+
+### Remaining scope
+
+- GST-adjusting notes and non-`original_lot` stock modes remain disabled pending
+  reviewed historical evidence and CA-confirmed GST, commercial-note, and damage
+  ITC policy.
+- The working tree contains inherited staged and untracked changes. Preserve
+  them; do not use `git add .`, reset, stash, or push as a completion claim.
+- UI/device verification remains outstanding.
+
+---
+
+## Session parked — 2026-09-30, 02:53 IST
+
+**User instruction:** push only if everything is complete; otherwise update the resume files. The full refund feature is
+**not complete**, so no commit or push was performed. The verified reversal foundation is finished; implementation stopped
+before the atomic credit-note writer. This checkpoint is saved **locally only**, not backed up to the Git remote.
+
+Resume on `fix/refund-reversal-foundation`, preserving all staged, unstaged and untracked project files.
+The original index is unchanged (`22731cc4a63a2fedb6aa9268dfea26d68e108aeb`), including five `.claude/worktrees/` gitlinks
+and the inactive migration 0006. Never run `git add .` or commit the whole index as the completed repair.
+
+**First next-session actions:**
+
+1. Read `AGENTS.md`, the current checkpoint below, and the top of `RESUME-HERE.md`. Read the actual root-level functional
+   spec §§2, 3.5, 3.6, 4.4, 5 and 8, then `docs/phase3-refund-design.md`; its contradictions are recorded below.
+2. Run `git status --short --branch`, `git log --oneline -10`, and `cd worker && npm run test:unit`.
+    Re-establish the full baseline with a disposable local DB using only unchanged migrations 0001–0005.
+3. The atomic writer now lives in `recordCreditNoteAtomic()` in `worker/src/index.js`; retain the tested planner and ledger helper.
+4. Before further posting or tax changes, obtain a separate bounded approval for the remaining GST/history/ITC policy questions.
+5. Any future writer change needs a failing endpoint regression first, exact Dr/Cr and stock assertions, idempotency and numbering
+    checks, and a fresh disposable full-suite run. UI repair follows separately; never grant till access to refunds.
+
+Only after the selected implementation is verified and inherited changes are separated into reviewable commits should a push
+be reconsidered. Do not push to main/master/production, apply migration 0006, or treat green helper/report tests as refund-creation coverage.
+
+---
+
+## Current checkpoint — approved refund reversal foundation verified
+
+**Scope:** spec Phase 2, §§2, 3.5, 4.4, 5 and 8. User approved the bounded reversal-foundation plan;
+this does **not** activate or complete `POST /credit-notes`, decide GST eligibility, or fix cumulative invoice refund rounding.
+
+### Implemented
+
+- `worker/src/ledger.js`: refund voucher settlement now credits the actual `refundMode`, not the original sale's payment mode.
+  Cash refunds of card sales therefore credit Cash (1000), not Bank (1010). Missing/unknown/coerced/prototype-property modes are rejected.
+  Existing revenue, GST, COGS and signed-round-off branches remain unchanged; their templates are tested, not certified as tax policy.
+- `worker/src/refunds.js`: `planReturn` validates positive safe-integer IDs/quantities before DB preparation, validates stored
+  remainders, takes final costs exactly, and rejects unsafe intermediate multiplication, rounding addition and accumulated cost.
+- Each selected allocation gets a transaction-local snapshot assertion before its counter decrement. A changed or missing
+  id/line/lot/quantity/cost snapshot triggers the existing CHECK through a conditional invalid INSERT; a fresh snapshot inserts no row.
+  All statements **must** run in the caller's single `DB.batch()`: CHECK aborts the statement, and batch supplies whole-transaction rollback.
+  Original allocation quantity/cost/provenance are never rewritten. Planner output does not itself restore physical lots or post a document.
+- `worker/test/refunds.test.js`: 23 tests cover settlement modes, exact journal lines, 333+334+333 remainder conservation,
+  unsafe inputs/arithmetic, stale/missing/changed-owner snapshots, replay, multi-allocation rollback, physical-stock prefix rollback,
+  later-statement failure, original evidence/sequence preservation and separate per-shop DB bindings.
+- `worker/package.json`: includes the foundation tests in both standard test scripts. No dependency/schema/migration/HTTP writer change.
+
+### Verification (2026-09-30)
+
+Commands run from `worker/` unless an absolute path is shown:
+
+| Check | Result |
+|---|---|
+| Fresh isolated baseline `npm test` with explicit local fixture credentials | 334 passed |
+| Regression tests before source fixes | 8 passed, 13 failed; later added malformed-mode and two extra rollback cases |
+| `node --check src/refunds.js && node --check src/ledger.js && node --check test/refunds.test.js` | Passed |
+| `node --test test/refunds.test.js test/ledger.test.js` | **35 passed** (23 refund + 12 ledger) |
+| `npm run test:unit` | **230 passed** |
+| `POS_API=http://127.0.0.1:18801 POS_TOKEN=test-token POS_ADMIN_TOKEN=admin-token-x npm test` | **357 passed, 0 failed** |
+| `node C:/Users/swastika/AppData/Local/Temp/tmp.Ht8lITyd6Z/d1-foundation-probe.mjs` | Passed actual local D1.batch stale/missing-row rollback and 333+334+333 checks |
+| `git diff --check` | Passed for recovery edits |
+
+The API suite used disposable state `C:/Users/swastika/AppData/Local/Temp/tmp.Ht8lITyd6Z`, initialized with unchanged
+migrations 0001–0005 only (96 statements), using the isolated Wrangler commands recorded in the previous checkpoint.
+The D1 probe used the already-installed Miniflare/workerd dependency and its disposable database, not production or default local state.
+Its initial setup failed because the bundled README's constructor shape was stale; the installed source/export
+`convertV4MiniflareOptions` resolved the probe setup, after which all assertions passed. No package was installed.
+Both the probe runtime and the owned Wrangler server/Windows descendants were stopped.
+No lint/format/type-check scripts exist; UI/Android/hardware and deployment were not exercised.
+
+### Next scope and remaining limits
+
+- Allocation concurrency protection assumes original sale allocations are immutable and guards selected snapshots, not arbitrary insertion
+  of new allocation evidence after planning. The writer must separately protect sale-line and invoice-level settlement remainders.
+- The refund HTTP writer is still broken and unchanged. Next requires a separately reviewed atomic writer/idempotency/numbering plan,
+  plus cumulative settlement rounding, historical registration/date evidence and CA-confirmed GST/commercial-note/damage ITC policies.
+- Do not enable the draft tax helper that returns `true`, or claim the tested financial/write-off voucher templates settle those policies.
+- No commit/push: inherited staged work remains untouched (index tree `22731cc4a63a2fedb6aa9268dfea26d68e108aeb`).
+  New recovery changes remain unstaged; a clean commit split is still needed. Migration 0006 remains inactive.
+
+---
+
+## Previous checkpoint — legacy API and report recovery verified
+
+**Scope:** spec Phase 2 stabilization, §§3.5, 7, 8, 10.2 and 13. This is not completion of RBAC/MFA or a production-compliance sign-off.
+The user approved restoring legacy authentication, repairing report integration, and running the full suite against reviewed isolated local state.
+
+### Completed (2026-09-30)
+
+- Active authentication accepts only the established till/admin credentials, without JWT configuration or auth-table reads.
+  Till access is limited to catalog, sale creation, display settings, images, and single-bill reprints; books and writes remain admin-only.
+  Unknown/malformed credentials fail closed. Header/raw-token compatibility and legacy 401 responses are retained.
+- Route matching now precedes authorization; parameter decoding follows authorization. Image URLs accept only the till token,
+  never an admin credential, and malformed query values cannot become header exceptions. CORS includes PATCH.
+- Unimplemented identity/API-key/audit routes are no longer active. Settings use the legacy transaction without the draft's
+  separate, schema-dependent audit insert. Draft helper code remains for future reviewed work; no claim of immutable auditing.
+- Fixed a newly exposed sale-line INSERT defect: nineteen columns had twenty placeholders. Stored returnable values and exact
+  sale journal lines are regression-tested; tax arithmetic, account mappings and voucher allocation rules were not changed.
+- All nine accounting-report routes now return JSON Responses, use omitted-date defaults, and map invalid dates to 400.
+  Stock keeps `qty`, `value_paise`, and `totalValuePaise` for existing clients, alongside detailed reconstruction/reconciliation.
+- Calendar-date trial balance uses half-open IST bounds through an additive `to_exclusive` option; valid raw timestamp callers retain
+  their inclusive-end legacy contract. Malformed dates are rejected, not silently treated as unbounded reports.
+- Reports now include signed stored credit notes, commercial versus GST-return amounts, zero-closing-account period earnings,
+  original/new-lot return movements at note dates, and zero-stock-delta written-off dispositions. Return lots do not inflate purchases.
+- Added `auth-legacy.test.js` (15), `api-recovery.test.js` (13), `report-recovery.test.js` (16), and `api-report-http.test.js` (27).
+  Retained all earlier assertions and included all report/auth/route tests in package scripts. Per-shop database-binding separation is tested;
+  this is not shared-database multi-tenant isolation.
+
+### Verified results
+
+| Command/check | Result |
+|---|---|
+| Baseline full suite, on fresh local migrations 0001–0005 | 148 passed, 100 API tests failed at the JWT/auth setup hook |
+| Auth regressions before fix | 1 passed, 14 failed |
+| Report regressions before fix | 1 passed, 13 failed; subsequently expanded to 16 tests |
+| New Worker route regressions before route fixes | 3 passed, 10 failed |
+| `node --test test/api-recovery.test.js test/report-recovery.test.js test/reports.test.js test/auth-legacy.test.js test/worker-load.test.js` | 67 passed |
+| `npm run test:unit` | **207 passed, 0 failed** |
+| Full suite with explicit local fixture environment (command below) | **334 passed, 0 failed, twice consecutively** |
+| `node --check` for changed source and new tests | Passed |
+| `git diff --check` | Passed for recovery edits; inherited staged whitespace findings are separate |
+| Real Wrangler/D1/R2 flow | Sales, purchases, settings, reprints, images, reports, auth refusals, GST, FIFO, balanced books and idempotent retries exercised |
+
+Commands ran from `worker/`. The test database was created under
+`C:/Users/swastika/AppData/Local/Temp/tmp.ByNueQkLl6`, not the default local database or any remote database.
+Its `baseline.sql` was assembled from exactly the unchanged migrations `0001_initial.sql`, `0002_foundation.sql`,
+`0003_items_images.sql`, `0004_refunds.sql`, and `0005_actor_identity.sql`; 96 statements applied successfully using:
+
+```bash
+npm exec -- wrangler d1 execute pos --local --persist-to <disposable-directory> --file <reviewed-baseline.sql> --yes
+npm exec -- wrangler dev --port 18801 --inspector-port 19229 --local \
+  --var POS_TOKEN:test-token --var POS_ADMIN_TOKEN:admin-token-x \
+  --persist-to <disposable-directory>
+# Separate shell:
+POS_API=http://127.0.0.1:18801 POS_TOKEN=test-token POS_ADMIN_TOKEN=admin-token-x npm test
+```
+
+Migration 0006 was **not** applied. No migration file was edited; no new dependency was added.
+Owned dev servers and residual Windows process trees were stopped. No lint/format/type-check scripts are configured.
+Android, browser UI, hardware, and deployment were not verified in this step.
+
+### Credit-note investigation — foundation subsequently approved and completed above
+
+A fresh isolated baseline on 2026-09-30 passed **334/334** using unchanged migrations 0001–0005 under
+`C:/Users/swastika/AppData/Local/Temp/tmp.OfgY4mcOdK`. No production code was changed during this investigation.
+An in-memory SQLite reproduction created a real sale through the Worker, then submitted an authenticated,
+well-formed refund. It returned 500 with `ReferenceError: getOriginalSupplyDate is not defined`.
+The failed refund left notes, stock, returnable counters, series and journals unchanged.
+
+Additional deterministic probes found:
+
+- `creditNoteVoucherLines()` credits Bank (1010) for a card-origin sale refunded in cash, ignoring `refundMode`.
+  A balanced voucher is not sufficient: this must credit Cash (1000).
+- Independent per-note rupee rounding can refund 600 paise against a 500-paise invoice (two 250-paise parts
+  each round to 300). Preserve cumulative original settlement/round-off rather than copying this draft behavior.
+- Nonnegative counters alone do not reject every stale plan: three plans reading quantity 3/cost 1000 can each
+  subtract 1/333 and leave quantity 0/cost 1. Require transaction-aborting stale-plan detection, not a zero-row UPDATE.
+- The design's six-character series prefix produces a 17-character number with its stated suffix; total length
+  and sequence growth need validation. No new legal threshold or tax rule has been assumed.
+
+**Approved and completed first medium-sized step: verified reversal foundations only (see current checkpoint).**
+
+- Files: `worker/src/refunds.js` (validated, exact allocation plan and stale-plan rejection),
+  `worker/src/ledger.js` (settlement uses actual refund mode), new `worker/test/refunds.test.js`,
+  `worker/package.json` (run the regressions), and `PROGRESS.md`.
+- Test first: exact refund account, reverse allocation order, 1000/3 returning 333+334+333, zero-cost lots,
+  invalid/unsafe amounts, stale-plan rollback, and preservation of original allocation evidence.
+- Journal template for later activation: Dr goods/service revenue; Dr applicable output GST or separately approved
+  nonrecoverable-tax expense; Cr the actual refund settlement account; Dr restored Stock / Cr COGS; signed Round Off.
+  The foundation does not decide GST eligibility or activate the HTTP writer.
+- No schema change, new dependency, migration 0006, UI change, refund endpoint activation, or tax-policy change in this step.
+- Follow with a separately approved atomic writer/idempotency/numbering step and then client contract repair.
+
+### Open Compliance Questions — credit-note repair
+
+1. Confirm the cumulative settlement/rounding policy before partial refunds: the recommended invariant is that full
+   reversal returns exactly the original stored `total_paise` and signed round-off, never more due to per-note rounding.
+2. Confirm with a CA the applicable effective-dated GST cutoff/B2CL rules, annual-return facts, historical registration/date
+   evidence policy, and explicit commercial-note treatment. Sales lack original registration snapshots; do not substitute current
+   settings or use the placeholder `isTaxAdjustedAllowed() => true`. Refund settings are not yet writable through the settings API.
+3. Determine damaged-return ITC treatment and any commercial-note GSTR-3B consequences before enabling `none`/financial-note paths.
+   Do not assume the draft's Dr 5100 / Cr 5000 alone satisfies the specification's ITC-reversal requirement.
+
+The web refund payload also lacks a stable `client_ref`, uses string line IDs/per-line modes, reads the wrong sale envelope,
+and uses the till credential. Keep admin authorization; repair the client contract separately rather than relaxing access.
+Owned investigation servers and their Windows child processes were stopped. Prior Git staging remains untouched.
+
+### Next — separately scoped posting repair, not more authentication features
+
+1. **Credit-note creation remains a blocker.** Read-only report tests use schema-valid stored credit notes and balanced voucher fixtures;
+   they do not prove the existing POST `/credit-notes` writer works. Code review found undefined helpers (`getOriginalSupplyDate`,
+   `isTaxAdjustedAllowed`, `divRound`, `planReturn`), mismatched migration-0004 column names, `goods` versus `good`, and placeholder
+   numbering. Repair this with a dedicated failing end-to-end test, exact journal/stock assertions and an approved posting plan.
+2. Sales do not yet have frozen registration/GSTR-bucket columns. Report output leaves those unknown (`null`) rather than inventing
+   historical values from current settings. The old bill-reprint registration issue is not resolved by this recovery.
+3. Web panel/admin-credential wiring and real-device flows still need their own verification. Do not make reports till-readable to fix UI errors.
+4. Keep remaining Phase 2 work ahead of expanded Phase 5/6 identity. Keep migration 0006 inactive until schema, password hashing,
+   session/MFA behavior, actor attribution, tenant model and atomic immutable auditing receive dedicated review.
+
+Original staged work (including five worktree gitlinks and migration 0006) was preserved without staging changes.
+Recovery edits remain unstaged; no commit/push was made to avoid bundling inherited unfinished changes. A clean checkpoint/PR split remains necessary.
+Audit-rule applicability and the draft's seven-year versus spec eight-year retention conflict still need CA confirmation.
+
+---
+
+## Previous checkpoint — module/build recovery only (superseded)
+
+This earlier checkpoint superseded the older completion estimates and Task 1 resume order below.
+The user delegated the recovery choice after reviewing the broken baseline.
+**Active scope: stabilize the existing spec Phase 2 integration before expanding Phase 5/6 RBAC/MFA.**
+Relevant spec sections: 7 (reports), 8 (integrity), 10.2 (authorization), 13 (phasing).
+The specification is `Indian-BookKeeping-Software-Functional-Spec.md`; `docs/SPEC.md` does not exist.
+Historical labels such as "Phase 3 reports" are not the specification's phase numbering.
+
+### Completed in this recovery step
+
+- Created `fix/worker-module-load` without changing HEAD or the pre-existing staged work.
+- Repaired `putSettings()`'s premature closing brace/duplicate write block. Existing FY-start,
+  invoice-series, and empty-update checks now run before any database access.
+- Exported the existing JSON helper for `auth.js`; response behavior is unchanged.
+- Corrected two invalid JavaScript comment separators in `auth.js`.
+- Fixed the TOTP counter's `const` reassignment, which prevented Wrangler from building.
+  An RFC 6238 SHA-1 vector covers the correction; this does **not** certify the unfinished MFA implementation.
+- Added eight serverless regression tests in `worker/test/worker-load.test.js` and included
+  them in both package test commands. The original seven failed before the syntax/link repairs;
+  the additional TOTP test failed with `Assignment to constant variable` before its one-line fix.
+- No new dependency, migration application, permission-policy change, posting change, or tax-calculation change.
+
+### Verification
+
+Commands below run from `worker/` unless noted otherwise:
+
+| Check | Result |
+|---|---|
+| Baseline `npm run test:unit`, before new tests | 133 passed; FY test file failed to import |
+| `node --check src/index.js` and `node --check src/auth.js` | Pass after repair |
+| `node --check test/worker-load.test.js` | Pass |
+| `node --test test/worker-load.test.js test/fy.test.js` | 15 passed |
+| `npm run test:unit` | 148 passed |
+| `node --test test/reports.test.js` | 15 passed; in-memory builder tests only |
+| `npm run dev:test -- --persist-to <temporary-directory>` | Builds and reports ready; default-port HTTP probe timed out with two local listeners |
+| Full `npm test`, explicitly pinned to local port 8801 and fixture tokens | 148 passed, 100 API tests failed in setup after the HTTP timeout |
+| Isolated Worker on port 18801, inspector 19229 | Builds; live OPTIONS `/settings` returns 200/CORS; unauthenticated GET `/products` returns 401 JSON |
+| Legacy till-token GET `/products` on port 18801 | 500; runtime confirms `JWT_SECRET must be at least 32 characters` |
+| Full suite rerun on port 18801 | 148 passed, 100 API tests failed at the shared setup hook parsing the auth error HTML as JSON |
+| `git diff --check` at repository root | Pass for recovery edits; pre-existing staged whitespace findings remain |
+
+Isolated runtime commands (replace the placeholder with a disposable directory outside the repo):
+
+```bash
+npm exec -- wrangler dev --port 18801 --inspector-port 19229 --local \
+  --var POS_TOKEN:test-token --var POS_ADMIN_TOKEN:admin-token-x \
+  --persist-to <temporary-directory>
+# Separate shell, explicitly local fixture credentials:
+POS_API=http://127.0.0.1:18801 POS_TOKEN=test-token POS_ADMIN_TOKEN=admin-token-x npm test
+```
+
+No lint/format/type-check scripts are configured. Android and browser/device flows were not rerun.
+No migrations were applied. The isolated database intentionally had no schema; the API hook was blocked by
+legacy authentication before database access, so this is **not** a migrated-database integration result.
+All owned dev servers and residual Windows child processes were stopped; no listeners remained on the test ports.
+The pure/unit and report checks do **not** establish that the HTTP API or the overall application is working.
+
+### Remaining blockers — next small tasks, in order
+
+1. Restore the existing till/admin authorization boundary with regression tests. Confirmed serverlessly:
+   `Bearer test-token` with the documented test environment throws `JWT_SECRET must be at least 32 characters`
+   before legacy fallback or database access. Also review null permissions, route matching before authorization,
+   image query-token access, and the draft's unintended till `sales.read` access. Do not hide these by changing test credentials.
+2. Repair report HTTP adapters and compatibility: builders currently return objects instead of Responses,
+   the trial-balance route calls the wrong handler signature, default dates/error mapping need review,
+   and stock response fields differ from the existing API contract. Report tests omit credit-note tables;
+   their passing result does not verify returns-aware reporting or half-open date boundaries.
+3. Re-establish full API verification in disposable local state with a reviewed migration set. Never run
+   `migrate:local` blindly: it currently includes the unreviewed staged `0006_user_rbac_audit.sql`.
+4. Finish remaining Phase 2 work in separately planned changes. Leave additional Phase 5/6 features deferred.
+
+The auth draft still references sixteen undefined route handlers. Password hashing is PBKDF2 labelled as
+scrypt, MFA verification/secret generation need review, settings persistence and audit insertion are separate
+writes, and tenant isolation/immutable auditing are not established. Do not deploy or call this draft compliant.
+
+### Git/checkpoint safety
+
+The original fourteen staged paths include five `.claude/worktrees/` gitlinks and unfinished auth/report/UI work.
+They were preserved; this recovery's edits are unstaged. No commit/push is safe while the API gate is failing
+and a commit would bundle unrelated, unreviewed staged work. Do not use `git add .`.
+
+### Open Compliance Questions
+
+- Confirm audit-rule applicability and retention with a CA before enabling the audit migration: its seven-year
+  setting conflicts with the specification's eight-year Companies Act requirement. No retention decision was made.
+- The draft's "MCA compliant" / "immutable" labels are not verified compliance evidence.
+
+---
+
+## Historical roadmap snapshot (2026-09-28; estimates and completion claims not revalidated)
+
+## 📊 Overall Completion Status
+
+| Phase | Spec Phase | Status | Features Done / Total |
+|-------|------------|--------|----------------------|
+| **Phase 1** | Core ledger, CoA, sales/purchase, GST, simple inventory, cash/bank | ✅ **Done** | ~25 / 25 |
+| **Phase 2** | Multi-payment, returns/credit notes, ITC reversal, GSTR, Reports | ⚠️ **~80%** | ~16 / 20 |
+| **Phase 3** | Service module — projects, timesheets, WIP, recurring billing | ❌ Not started | 0 / ~25 |
+| **Phase 4** | E-invoice, e-way bill, TDS, multi-godown, batch/serial | ❌ Not started | 0 / ~20 |
+| **Phase 5** | Advanced reporting, budgeting, audit trail, RBAC, offline sync | ⚠️ **~30%** | Audit trail started |
+| **Phase 6** | Party module, security hardening, VAPT | ❌ Not started | 0 / ~25 |
+| **Phase 7** | AI features — bank OCR, geofencing, forecasting | ❌ Not started | 0 / ~15 |
+
+**Overall: ~12% of spec features, ~25-30% of total effort** (core ledger/FIFO/GST/double-entry are the hard structural parts and are DONE).
+
+---
+
+## ✅ What's Completed (This Session)
+
+### Phase 3 Reports (Completed)
+- **Worker**: 9 new report endpoints in `worker/src/reports.js` (496 lines)
+  - `/reports/stock` — FIFO stock register with reconciliation
+  - `/reports/trial-balance` — Debit/credit control report
+  - `/reports/profit-loss` — P&L with goods/services/COGS breakdown
+  - `/reports/balance-sheet` — Balance sheet with unclosed earnings
+  - `/reports/sales-register` — Invoices + credit notes (signed)
+  - `/reports/purchase-register` — Supplier purchases with stock cost
+  - `/reports/cash-book` — Cash receipts/payments with running balance
+  - `/reports/day-book` — Chronological voucher headers
+  - `/reports/integrity/stock` — FIFO lot value vs Account 1200 reconciliation
+- **Tests**: `worker/test/reports.test.js` — 15 tests, all passing
+- **Routes**: Added to `worker/src/index.js` with RBAC permissions
+- **Web UI**: 3 new panels in `web/index.html` + handlers in `web/app.js`
+  - **Stock Panel** — View stock, add opening stock
+  - **Ledger Panel** — Trial Balance, Day Book, Cash Book with date prompts
+  - **Refund Panel** — Load sale by ref, select lines/mode, create credit note
+
+### Compliance Floor — Started (Task 1 of 14)
+- **Migration**: `worker/migrations/0006_user_rbac_audit.sql`
+  - `users` table with password hash, MFA secret, role, lockout tracking
+  - `roles` table with 6 system roles (owner, accountant, sales, inventory, auditor, admin)
+  - `permissions` reference table (24 permissions across 8 categories)
+  - `audit_log` — immutable, append-only (MCA 2023 compliant)
+  - `api_keys` — for programmatic access with scopes
+  - `sessions` — for web admin panel
+  - Seeded default roles with permission matrices
+- **Auth Module**: `worker/src/auth.js` (400+ lines)
+  - Password hashing (scrypt via Web Crypto)
+  - JWT HS256 (access + refresh tokens)
+  - TOTP MFA (RFC 6238)
+  - RBAC permission checking with caching
+  - Audit logging helper
+  - API key management
+  - Session management
+- **Index.js Integration**:
+  - New RBAC-based route helpers (`route`, `routeId` with permissions)
+  - Legacy route helpers for backward compatibility (till token)
+  - Request metadata capture (requestId, IP, User-Agent) for audit
+
+---
+
+## 🔄 In Progress (Task 1: Compliance Floor — ~40% done)
+
+### Remaining for Task 1
+| Item | Status | Est. Effort |
+|------|--------|-------------|
+| Update 8 existing handlers (`recordSale`, `recordPurchase`, `recordCreditNote`, `createItem`, `updateItem`, `deactivateItem`, `uploadItemImage`, `addOpeningStock`) with auth params + audit logging | ⏳ Pending | 2-3 hrs |
+| Update read handlers (`listSales`, `listProducts`, `listItems`, `getSettings`, `getShop`, 9 report handlers) for RBAC | ⏳ Pending | 1 hr |
+| 10 new auth route handlers (login, register, MFA setup/verify, refresh, logout, me, users CRUD, API keys CRUD, audit log reader) | ⏳ Pending | 2-3 hrs |
+| Test auth end-to-end (login → JWT → protected route → audit entry) | ⏳ Pending | 1 hr |
+| Run migration + unit tests | ⏳ Pending | 30 min |
+
+**Task 1 ETA: 4-6 more hours**
+
+---
+
+## 📋 Remaining 13 Tasks (Full Roadmap)
+
+### Task 2: Party Master Module (9.1) — HIGH PRIORITY
+**Spec Sections:** 9.1 Party Master
+- Multi-address (billing, shipping, registered office) with per-address GSTIN
+- Multiple contact persons per party
+- Bank account details with penny-drop verification
+- Credit terms: limit, period, overdue interest
+- Price list assignment (retail/wholesale/dealer)
+- Party grouping (region, industry, sales zone, salesperson)
+- Opening balance (Dr/Cr) with as-on date
+- KYC document storage (PAN, GST cert, MSME, cancelled cheque)
+- MSME/Udyam flag → auto-calculate 45-day interest
+- TDS applicability flag per party
+- Blacklist/hold flag
+- Duplicate detection (PAN/GSTIN)
+
+**Effort:** 2-3 weeks
+**Depends on:** Task 1 (audit trail for party changes)
+
+---
+
+### Task 3: Party Ledger & Statements (9.2) — HIGH PRIORITY
+**Spec Sections:** 9.2 Party Ledger & Statements
+- Real-time running ledger per party with running balance
+- Auto-generated party statements (PDF/WhatsApp/Email)
+- Scheduled statements (e.g., 1st of every month)
+- Ledger confirmation/reconciliation requests
+- Aging-wise outstanding (0-30/31-60/60-90/90+)
+- Payment/collection reminders (auto SMS/WhatsApp/Email)
+- Party-wise profitability (customer margin, vendor volume)
+- Duplicate-party detection
+- Merge-party utility with audit trail
+
+**Effort:** 2 weeks
+**Depends on:** Task 2
+
+---
+
+### Task 4: Service Module — Phase 3 (Spec §4) — HIGH PRIORITY
+**Spec Sections:** 4.1-4.5 Service Module
+- **4.1 Service Master**: Service code, SAC, GST rate, billing basis (fixed/hourly/milestone/retainer), rate cards
+- **4.2 Projects/Engagements**: Budget, dates, team, timesheets (billable vs non-billable), WIP tracking (Ind AS 115), expense capture
+- **4.3 Service Billing**: Milestone (% completion), Time & Material, Retainer/AMC (recurring auto-invoice), Advance/Retainer as liability, Revenue recognition (over time vs point in time), TDS receivable tracking
+- **4.4 Service Credit Notes**: No physical return, but credit notes for disputes/discounts
+- **4.5 Recurring/Subscription**: Auto-generate on schedule, annual escalation, dunning workflows, pause/resume/cancel with pro-rata
+
+**Effort:** 4-6 weeks
+**Depends on:** Task 1 (RBAC for project access), Party Master for client linkage
+
+---
+
+### Task 5: E-invoice / E-way Bill Integration (Phase 4) — MEDIUM PRIORITY
+**Spec Sections:** 3.3, 7 (Tax/Compliance)
+- GSP/ASP integration (sandbox → production)
+- IRN generation + QR code embedding
+- E-way bill generation for goods movement > threshold
+- E-invoice/IRN register, e-way bill register reports
+- Cancel/amend IRN within 24h window
+
+**Effort:** 3-4 weeks
+**Depends on:** Task 1 (audit trail), GST registration settings
+
+---
+
+### Task 6: TDS Automation — MEDIUM PRIORITY
+**Spec Sections:** 4.3, 6, 7 (Tax/Compliance)
+- TDS deduction on payments (194J professional, 194C contractor, 194I rent, etc.)
+- TDS receivable tracking (client deducts TDS from your invoices)
+- Form 26AS reconciliation (auto-match deducted vs deposited)
+- Challan generation (Form 26Q/27Q)
+- TDS certificate (Form 16/16A) generation
+- Section 194Q/206C (TCS on sales of goods > ₹50L)
+
+**Effort:** 2-3 weeks
+**Depends on:** Party Master (TDS flags), Task 1
+
+---
+
+### Task 7: Multi-godown + Batch/Serial/Expiry Tracking — MEDIUM PRIORITY
+**Spec Sections:** 3.1, 3.2, 3.2
+- Godown master + stock_lots.godown_id
+- Inter-godown transfer voucher (in-transit status)
+- Batch tracking (batch_no, mfg_date, exp_date) per lot
+- Serial number tracking (IMEI, unique ID per unit)
+- Expiry reports + FEFO (First Expired First Out) for pharma/FMCG
+- Stock valuation per godown
+
+**Effort:** 3-4 weeks
+**Depends on:** Core FIFO engine (done), migration
+
+---
+
+### Task 8: Damage/Write-off Voucher with ITC Reversal — HIGH PRIORITY
+**Spec Sections:** 3.6, 7 (Tax/Compliance)
+- Separate voucher type (not sale/purchase)
+- Reduces stock qty/value → "Loss on Damaged Goods" expense
+- **Auto ITC reversal** per Section 17(5)(h) — critical GST compliance
+- Reason codes: transit damage, expiry, theft, fire, defect, free sample
+- Insurance claim tracking (optional)
+- Report: Damage/write-off with ITC reversal amount
+
+**Effort:** 1-2 weeks
+**Depends on:** Task 1 (audit trail), stock_lots schema
+
+---
+
+### Task 9: Split Payments + Advances + PDC Management — MEDIUM PRIORITY
+**Spec Sections:** 6 Multi-Payment Options
+- Split payment: one invoice across multiple modes (₹5K cash + ₹15K UPI)
+- Advance/token payment → liability, adjusted against invoice (GST on advance for services per Section 13)
+- PDC register: maturity alerts, bounce/re-presentation, bounce charges
+- Partial payment & payment schedule (installments/EMI)
+- Auto-reconciliation via payment gateway webhook / bank statement import
+- TDS-adjusted receipt: Bank Dr + TDS Receivable Dr against full invoice
+
+**Effort:** 2-3 weeks
+**Depends on:** Task 1, Party Master
+
+---
+
+### Task 10: Advanced Reporting — MEDIUM PRIORITY
+**Spec Sections:** 7 Reports
+- **Financial**: Cash Flow Statement, Notes to Accounts, Ratio Analysis (current ratio, DSO, inventory turnover)
+- **Inventory**: Reorder report, fast/slow/dead stock, batch expiry, damage/write-off with ITC reversal
+- **Sales/Purchase**: Party/item/salesperson/project-wise analysis, return summary with reasons, outstanding aging
+- **Service**: Project profitability, timesheet utilization, WIP/unbilled revenue, recurring schedule, TDS reconciliation
+- **Tax**: GSTR-2A/2B reconciliation, ITC reversal (17(5)), TDS/TCS challan reports
+- **Payments**: Mode-wise collection, PDC register, advance received/adjusted
+
+**Effort:** 2-3 weeks
+**Depends on:** Tasks 1-9 (data sources)
+
+---
+
+### Task 11: Security Hardening (Phase 6) — MEDIUM PRIORITY
+**Spec Sections:** 10 Security Architecture
+- **Client**: Certificate pinning (mobile), biometric app-lock, FLAG_SECURE screens, jailbreak/root detection, obfuscation (R8/ProGuard), CSP/SRI (web), auto-logout
+- **Server**: Argon2 password hashing, mandatory MFA for admin/high-value, short-lived JWT + refresh rotation + revocation list, RBAC enforced server-side, row-level tenant isolation, AES-256 at rest, field-level encryption (PAN, bank), Vault secrets, parameterized queries only, CSP/XSS/CSRF protection, rate limiting, idempotency keys, dependency scanning
+- **Infra**: WAF, network segmentation (DB private), DDoS protection, encrypted geo-redundant backups with tested restore, immutable audit logs to separate system
+- **Process**: Anomaly monitoring, VAPT, bug bounty, SOC 2/ISO 27001 alignment
+- **Compliance**: DPDP Act 2023 consent/breach notification, RBI/NPCI for UPI, GST/Companies Act retention with tamper-evident storage
+
+**Effort:** 2-3 weeks (ongoing)
+**Depends on:** Task 1 (foundation)
+
+---
+
+### Task 12: Android App Parity — HIGH PRIORITY
+**Spec Sections:** 2, 5, 8 (Offline-first)
+- All web features on Kotlin/Room/WorkManager
+- Room schema export (`room.schemaLocation`) for migration testing
+- Fast entry: tiles + keyboard + barcode scanner
+- Thermal printing (Bluetooth/USB), share sheet (PDF/WhatsApp)
+- Offline-first: Room → WorkManager sync → idempotent `client_ref`
+- Geofenced party auto-selection (Phase 7 preview)
+- Biometric lock, certificate pinning
+- Build: `gradle assembleDebug -PapiBase=... -PapiToken=...`
+
+**Current State:** Compiles, 34 tests pass, **never run on real device**
+**Effort:** 6-8 weeks
+**Depends on:** Backend API stability
+
+---
+
+### Task 13: Ease-of-Use Features (9.3) — LOW PRIORITY
+**Spec Sections:** 9.3 Ease-of-Use Features
+- WhatsApp integration (Twilio/Gupshup) — invoices, receipts, reminders
+- Voice-to-invoice / quick entry (minimal-tap)
+- Smart auto-suggest (recent/frequent first)
+- Bulk import (parties, items, opening balances) via CSV/Excel with validation preview
+- Duplicate invoice/voucher warning real-time
+- One-tap "collect payment" with UPI QR at counter
+- Dashboard: today's sales, collections, top overdue, low-stock, cash-in-hand
+- Multi-language (Hindi + regional)
+- Dark mode, offline mode, simple/advanced UI toggle
+- Undo/edit window (short window before hard-lock)
+- Smart reminders: AMC renewal, PDC maturing, GST return due, low stock
+
+**Effort:** 3-4 weeks (can be done incrementally)
+
+---
+
+### Task 14: AI Features (Phase 7) — LOW PRIORITY
+**Spec Sections:** 12 AI/Smart Automation
+- **12.1 Geofenced Party Intelligence**: GPS capture, geofence auto-selection (50-100m), multi-party proximity handling, route optimization, geo-stamped proof, offline geofencing, DPDP Act compliance
+- **12.2 Bank Statement AI Extraction**: PDF/CSV/OCR parsing, narration fuzzy-match to parties, UTR auto-fill, voucher matching by amount/date, anomaly flagging, learning loop
+- **12.3 Other AI**: Vendor bill OCR, voice-to-voucher, predictive reordering, cash flow forecasting, anomaly/fraud detection, smart GST reconciliation, natural-language reports, automated reminders with tone, receipt capture via photo, duplicate detection
+
+**Effort:** 8-12 weeks (requires ML pipeline, external APIs)
+
+---
+
+## 🗂️ File Changes Summary (This Session)
+
+### New Files
+| File | Lines | Purpose |
+|------|-------|---------|
+| `worker/migrations/0006_user_rbac_audit.sql` | ~200 | Users, roles, permissions, audit_log, api_keys, sessions |
+| `worker/src/auth.js` | ~450 | Password, JWT, MFA, RBAC, audit, API keys, sessions |
+| `worker/src/reports.js` | 496 | 9 report endpoints (Phase 3) |
+| `worker/test/reports.test.js` | 347 | 15 report tests |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| `worker/src/index.js` | New RBAC route structure, auth integration, 9 report routes, updated handler signatures |
+| `web/index.html` | +60 lines: Stock/Ledger/Refund panels |
+| `web/app.js` | +200 lines: Panel handlers, API calls, UI logic |
+
+### Git Status
+```bash
+# Committed (806a8eb):
+# - Phase 3 GSTR, Refunds, Seams Foundation merges
+# - Reports dashboard commit (d026480)
+
+# Uncommitted (working tree):
+M  web/index.html
+M  worker/src/index.js
+?? worker/src/reports.js
+?? worker/test/reports.test.js
+?? worker/migrations/0006_user_rbac_audit.sql
+?? worker/src/auth.js
+```
+
+---
+
+## Next session
+
+Follow **Current checkpoint** above, not the old Task 1 sequence. Safe serverless checks:
+
+```bash
+cd worker
+npm run test:unit
+node --test test/reports.test.js
+```
+
+Do not apply migration 0006, batch-stage the workspace, or start implementing the missing auth routes.
+Legacy authentication and report integration are now verified. Next, separately plan the credit-note writer/posting repair described at the top.
+
+**Historical priority order after Task 1 (superseded by phase-first recovery):**
+1. Task 2: Party Master (unlocks receivables, statements, credit terms)
+2. Task 8: Damage/Write-off + ITC Reversal (legal requirement §17(5)(h))
+3. Task 4: Service Module (differentiator — Tally/Busy weak here)
+4. Task 5: E-invoice (mandatory above turnover threshold)
+5. Tasks 3, 6, 7, 9, 10, 11, 12, 13, 14 in parallel as resources allow
+
+---
+
+## ⚠️ Key Technical Decisions (Do Not Change Without Discussion)
+
+1. **Money = Integer Paise** — `divRound(n, d) = floor((n + floor(d/2)) / d)` only rounding
+2. **FIFO = Cost Remaining** — lot stores `cost_remaining_paise`, not unit cost
+3. **Ledger-First** — every module generates journal entries via `buildVoucher()`; nothing bypasses ledger
+4. **Two Tokens** — till token (public, catalog-read + sale-insert) vs admin token (books + settings, never in URL)
+5. **Concurrency = CHECK Constraints** — not locking; loser gets 409 retryable
+6. **Business Date = India Calendar** — all reports use IST midnight boundaries, half-open intervals `[from, to_exclusive)`
+7. **Invoice Series = Per Device** — `A/26-27/0001` format, gapless within series
+8. **Audit Trail = Immutable** — append-only, shipped to separate system eventually
+
+---
+
+*Original roadmap generated by Kilo Orchestrator. Resume from the current checkpoint at the top, not this historical task order.*

@@ -1,13 +1,55 @@
 # Resume here
 
-Last session: 2026-09-23. Everything below is committed.
+Current checkpoint: **2026-10-01**, branch **`fix/refund-reversal-foundation`**, HEAD `f9dff91`.
 
-**Read in this order:** this file, then [HANDOFF.md](HANDOFF.md) for detailed
-status, then [ROADMAP.md](ROADMAP.md) for the long arc.
+## Exact verified continuation point — read this before coding
+
+**Not pushed:** the user requested a push only if all work was complete, otherwise a saved handoff.
+The full refund feature is not complete. Completed recovery/foundation changes remain **local, uncommitted and unpushed**;
+a fresh clone will not contain them. Preserve this working directory and its staged/unstaged/untracked project files.
+
+The atomic `POST /credit-notes` writer repair is present in committed `f9dff91` and verified. Do not redo it; review any
+follow-up against the remaining GST/history/ITC policy limits before changing posting behavior.
+
+1. Confirm branch and Git status; do not reset, stash, overwrite, or batch-stage inherited work.
+2. Run the serverless baseline (`cd worker && npm run test:unit`, verified **236 passed**).
+    Then establish a disposable local D1 with migrations **0001–0005 only** for the full baseline (verified **363 passed**).
+3. Reuse tested `planReturn` in `worker/src/refunds.js` and `creditNoteVoucherLines` in `worker/src/ledger.js`.
+   Do not use the placeholder writer/voucher/tax helpers in `refunds.js`; do not redo the completed foundation.
+4. Preserve the current policy boundary: GST-adjusting notes and non-`original_lot` stock modes remain disabled pending reviewed
+    evidence and CA confirmation. Any change requires a new bounded plan and approval.
+
+No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them.
+Do not run the default migration command (it includes unreviewed 0006), `git add .`, or deployment commands.
 
 ---
 
-## Where things stand
+**Read in this order:** [AGENTS.md](AGENTS.md), **Session parked** and the **Current checkpoint** in
+[PROGRESS.md](PROGRESS.md), this file, then the historical [HANDOFF.md](HANDOFF.md)
+and [ROADMAP.md](ROADMAP.md). The actual spec is
+[Indian-BookKeeping-Software-Functional-Spec.md](Indian-BookKeeping-Software-Functional-Spec.md).
+
+Legacy till/admin authentication and reports are repaired. The approved refund reversal foundation is now verified too:
+actual refund-account settlement, exact allocation remainders, safe-integer checks, and transaction-aborting stale-plan guards.
+**236 serverless/unit tests pass; the expanded full Worker suite passes 363/363.** A separate local D1.batch probe also
+verified stale/missing-allocation rollback of preceding vouchers/numbering and exact 333+334+333 cost conservation.
+The full run used Wrangler with unchanged migrations **0001–0005 only**, applied to a disposable local
+D1 outside the repo; default local and remote databases were not touched. See `PROGRESS.md` for exact commands.
+JWT/API-key/MFA routes and schema-dependent auditing remain inactive; migration 0006 was not applied.
+
+**Verified continuation:** the atomic `POST /credit-notes` writer now creates one-batch document, stock, allocation and
+ledger effects with idempotency, stable numbering, partial-return conservation and stale-plan rollback. GST-adjusting notes
+and non-`original_lot` modes remain intentionally disabled. Planner statements must run together with the caller's
+stock/document/journal writes in one D1 batch; planning alone restores no physical stock.
+Report tests verify stored credit-note effects, not successful creation. Retain the historical-registration
+snapshot/bill-reprint issue and unverified UI/device flows. Stay in spec Phase 2 stabilization, not expanded Phase 5/6 authentication.
+
+Original staged paths remain intact; recovery edits are unstaged. No commit or push was made because that
+would require separating inherited unfinished work. Do not use `git add .` or the historical migration instructions below.
+
+---
+
+## Historical snapshot — 2026-09-23 (not current verification)
 
 A working, correct double-entry POS for Indian retail and services. Phase 1 and
 phase 2 are built and verified; phase 3 is designed but not built.
@@ -22,18 +64,21 @@ phone.** That check is still outstanding.
 
 ---
 
-## Start the day with this
+## Safe checks for the current recovery
 
 ```bash
 cd worker
-npm install                 # first time only
-npm run migrate:local       # applies 0001, 0002, 0003
-npm run dev:test            # shell 1 — local Worker on :8801
-npm test                    # shell 2 — expect 202 passing
+node --check src/index.js
+node --check src/auth.js
+npm run test:unit
+node --test test/reports.test.js
 ```
 
-Two shells because killing wrangler's process tree from node on Windows hangs the
-test runner. `npm run test:unit` needs no server.
+These need no running server or persisted D1. `npm run test:unit` now includes report and auth tests;
+its separate report command above is optional for focused verification. Full API verification uses disposable local
+state with reviewed migrations 0001–0005; the default migration command also includes unreviewed 0006 and must not be used blindly.
+See `PROGRESS.md` for the passing full-suite command and isolated-port setup.
+On Windows, confirm owned Wrangler/workerd descendants actually stop after ending a dev command.
 
 Android (JDK, Gradle and SDK are installed under `C:\Users\swastika\tools\`):
 
@@ -51,7 +96,7 @@ outside the synced tree avoids it.
 
 ---
 
-## Next, in order
+## Historical next steps — superseded by the current checkpoint
 
 1. **Build phase 3 refunds and credit notes.** Fully designed in
    [docs/phase3-refund-design.md](docs/phase3-refund-design.md) — the
@@ -146,7 +191,7 @@ unaffected — this is test data only.
 
 ---
 
-## Before deploying
+## Historical deployment notes — do not deploy the current unfinished integration
 
 ```bash
 cd worker
