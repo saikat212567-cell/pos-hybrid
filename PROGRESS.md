@@ -52,6 +52,27 @@
 | `git diff --cached --check` before commit | Passed |
 | Branch push | Implementation and handoff updates are pushed; see `git log` for the exact tip |
 
+### GST / Admin Reminders and Cloud Build
+
+- **GST adjustment requires CA confirmation** for statutory cutoff and annual
+  return rules, original-supply registration/date evidence, commercial-note
+  treatment, and damaged/write-off ITC reversal. Keep GST-adjusted and
+  damage/ITC posting disabled until confirmed and separately reviewed.
+- When the page is live, the owner expects username/password admin login. The
+  current page only has a `POS_ADMIN_TOKEN` gate, so do not tell the owner
+  username/password login is available until a server-side auth design is built
+  and verified. Leave live deployment and credentials unchanged for now.
+- Android cloud verification is configured in
+  `.github/workflows/android-verify.yml`: Java 17, Gradle 8.9, Android SDK 34,
+  unit tests and debug APK assembly. It runs on standard GitHub-hosted Linux
+  runners for this public repository and stores no APK artifact. Trigger only on
+  Android/workflow changes pushed to the feature branch. No cloud run
+  has completed yet; the workflow must be pushed to trigger GitHub Actions.
+- Existing Codemagic config uses metered `linux_x2` at **$0.045/minute** under
+  current published pricing; the 500-minute individual free allowance is for
+  macOS M2, not Linux. Do not use Codemagic for this build when expecting it to
+  be free.
+
 The browser flow used a fresh disposable D1 under
 `C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by
 applying migrations `0001`–`0005` individually. No production or default local
@@ -76,6 +97,16 @@ approved schema/auth/audit plan.
 
 ### Known Limitations
 
+- **CA REMINDER — GST adjustment:** before enabling GST-adjusted credit notes,
+  ask a Chartered Accountant to confirm the applicable cutoff and annual-return
+  rules, historical registration/supply-date evidence, commercial-note treatment,
+  and damage/write-off ITC reversal. Keep commercial notes only; tax adjustment
+  and damage/ITC posting remain disabled until reviewed.
+- **Admin login follow-up:** when the admin page is made live, the owner wants to
+  access it with a username and password. Current `web/admin.html` is not live and
+  does not support username/password; it prompts for `POS_ADMIN_TOKEN`. Do not
+  expose or rotate credentials during this follow-up; design and approve actual
+  server-side user authentication before promising that flow.
 - GST-adjusting credit notes remain disabled because original-sale registration,
   historical date evidence, GST cutoff/commercial-note policy, and CA review are
   still unresolved.
@@ -83,7 +114,9 @@ approved schema/auth/audit plan.
   damage/write-off and ITC reversal require a separate reviewed implementation.
 - Active auth is still the legacy till/admin-token boundary. JWT, API-key, MFA,
   RBAC, and immutable audit behavior are not enabled or production-certified.
-- Android, printer, and deployment flows were not exercised.
+- Android, printer, and deployment flows were not exercised. Android build/test
+  is being moved to free GitHub-hosted Actions because Codemagic's configured
+  `linux_x2` runner is metered; no cloud build has completed yet.
 - No lint, format, or type-check scripts are configured in `worker/package.json`.
 
 ### Next Session Plan
@@ -99,9 +132,14 @@ approved schema/auth/audit plan.
 4. Plan a separate Android emulator/device verification pass for existing
    workflows; do not extend the app into unsupported refund/tax paths without
    first stabilizing the corresponding API and policy.
-5. Keep RBAC/MFA/audit migration work separately scoped. Do not activate or
+5. Obtain CA confirmation for the GST reminder above before enabling tax
+   adjustment or damage/ITC posting behavior.
+6. When deployment/admin-login work is scheduled, design a server-side
+   username/password flow with an approved auth schema/session/security plan;
+   current token gate is not username/password authentication.
+7. Keep RBAC/MFA/audit migration work separately scoped. Do not activate or
    push migration `0006` as part of Phase 2 stabilization.
-6. After any change, run targeted tests, the full disposable suite, review the
+8. After any change, run targeted tests, the full disposable suite, review the
    diff, update this section, and push only the intended commit.
 
 ---

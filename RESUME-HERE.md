@@ -23,6 +23,17 @@ GST/history/ITC policy limits before changing posting behavior.
     evidence and CA confirmation. Any change requires a new bounded plan and approval.
 5. Admin page browser verification is complete at desktop/mobile widths; do not
    repeat it. The catalog table now scrolls within its container on narrow screens.
+6. **CA reminder:** resolve GST cutoff/annual-return rules, original-supply
+   registration/date evidence, commercial credit-note treatment, and damage ITC
+   reversal with a CA before enabling tax-adjusted notes or damage/write-off.
+7. User wants username/password admin login when the site is live. The current
+   admin page uses a `POS_ADMIN_TOKEN` gate, not username/password auth; leave
+   credentials/deployment untouched until a reviewed server-auth plan is approved.
+8. Android heavy builds should use standard GitHub-hosted Actions (repo is
+   public). Codemagic's configured `linux_x2` rate is metered at $0.045/min.
+   `.github/workflows/android-verify.yml` runs unit tests and assembles the debug
+   APK without publishing it. It has not run yet; push its commit to this feature
+   branch to trigger it, then inspect the Actions job result.
 
 No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them.
 Do not run the default migration command (it includes unreviewed 0006), `git add .`, or deployment commands.
