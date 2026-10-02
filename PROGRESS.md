@@ -74,12 +74,14 @@
   available on the free individual plan. The faster `linux_x2` machine is
   metered at **$0.045/minute** and requires billing. Connect the repository in
   Codemagic UI and select `android-fast-verify`; no Codemagic build was triggered
-  from this session.
+  from this session. The user-observed build passed the API-configuration and
+  Android test/debug-APK steps.
 - The first Codemagic APK had an empty catalog because the verification workflow
   built without `API_BASE`/`API_TOKEN`, which Android injects into `BuildConfig`.
   The workflow now imports secure group `posapi`, fails if either value is absent,
   and passes both to Gradle. Add the deployed Worker URL and till `POS_TOKEN` in
-  Codemagic before rebuilding; never commit either value.
+  Codemagic before rebuilding; never commit either value. The live Worker must
+  also be redeployed with the current `/items` route before the catalog can load.
 
 The browser flow used a fresh disposable D1 under
 `C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by
@@ -125,6 +127,9 @@ approved schema/auth/audit plan.
 - Android build/test passed on free GitHub-hosted Actions run `37061589888`.
   Printer, device, deployment, and Codemagic-specific flows remain unexercised.
 - No lint, format, or type-check scripts are configured in `worker/package.json`.
+- Production Worker deployment is currently blocked by the missing `pos-images`
+  R2 bucket. R2 is not being created until a free, long-term image-storage
+  decision is made; the catalog API does not require images to function.
 
 ### Next Session Plan
 
