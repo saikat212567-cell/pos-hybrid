@@ -1,10 +1,10 @@
 # POS Hybrid — Development Progress Tracker
 
-**Last Updated:** 2026-10-02
+**Last Updated:** 2026-10-03
 
 **Branch:** `fix/refund-reversal-foundation`
 
-**Current HEAD:** `af7390e` (`feat: add admin commercial refund flow`)
+**Current HEAD:** `5d5df2d` (`fix: contain admin catalog overflow on mobile`)
 
 **Remote:** `origin/fix/refund-reversal-foundation`
 
@@ -34,6 +34,9 @@
 - The writer now validates normalized calendar dates in IST, conserves cumulative
   invoice round-off across partial notes, and aborts stale invoice totals even
   when concurrent notes affect different lines.
+- The catalog table is horizontally scrollable within its card on narrow screens;
+  mobile browser verification had found the table made the whole admin page
+  overflow horizontally.
 
 ### Verified Results
 
@@ -41,12 +44,20 @@
 |---|---|
 | `cd worker && npm run test:unit` | **244 passed, 0 failed** |
 | Full `npm test` against disposable Wrangler/D1 using migrations `0001`–`0005` only | **371 passed, 0 failed** |
-| Tabbit browser check of `web/admin.html` | Admin gate and Commercial refund controls rendered; editor remained hidden until admin unlock |
+| Tabbit end-to-end admin refund flow | Created isolated test item/stock/sale, loaded sale, submitted 1-of-2 commercial return; UI showed `CN/26-27/0001` |
+| Disposable D1 post-check | Credit note 300 paise; tax adjustment 0; original-lot return; COGS reversed 500 paise; returned stock qty 1 / cost 500; credit-note voucher Dr=Cr=800 paise |
+| Till credential authorization | `GET /admin/sales/:ref` and `POST /credit-notes` each returned 401 with till token |
+| Tabbit desktop/mobile widths | At 1440px desktop, no horizontal overflow. At 390px mobile, document width 375px; catalog table scrolls in its 319px container (table content width 549px) |
+| `node --check src/index.js` plus `node --check` new tests | Passed in prior implementation verification; no JS source changed in this responsive fix |
 | `git diff --cached --check` before commit | Passed |
-| Branch push | Implementation and handoff pushed in `af7390e` and `0f4d3c6` |
+| Branch push | Previous implementation/docs at `ab9dcaa`; responsive fix and this handoff pending commit/push |
 
-No production or default local database was used. Migration `0006` was not
-applied. The Wrangler process was stopped after testing.
+The browser flow used a fresh disposable D1 under
+`C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by
+applying migrations `0001`–`0005` individually. No production or default local
+database was used. Migration `0006` was not applied. Wrangler and the static
+web server were stopped after testing. A browser extension's notification
+overlay appeared in screenshots but did not prevent form interaction or checks.
 
 ### Intentionally Excluded Local Artifacts
 
@@ -56,6 +67,9 @@ These remain untracked locally and were not committed or pushed:
   draft with placeholder credentials and unresolved retention/auth policy.
 - `.claude/worktrees/*`: worktree gitlink/recovery metadata, not product code.
 - `__agent__/`: temporary agent patches and planning state.
+- `Navi_Body_DemiBold.woff2`, `android/assets/`, and `web/assets/` are also
+  untracked and were preserved without inspection/modification; do not stage
+  unless their owner explicitly includes them in a later task.
 
 Do not run `git add .`. Do not apply migration `0006` without a separately
 approved schema/auth/audit plan.
@@ -69,7 +83,7 @@ approved schema/auth/audit plan.
   damage/write-off and ITC reversal require a separate reviewed implementation.
 - Active auth is still the legacy till/admin-token boundary. JWT, API-key, MFA,
   RBAC, and immutable audit behavior are not enabled or production-certified.
-- UI browser/device, Android, printer, and deployment flows were not exercised.
+- Android, printer, and deployment flows were not exercised.
 - No lint, format, or type-check scripts are configured in `worker/package.json`.
 
 ### Next Session Plan
@@ -82,8 +96,9 @@ approved schema/auth/audit plan.
 3. If continuing credit-note work, first obtain approval for the GST/history,
    commercial-note, damage, and ITC policy decisions. Add a failing endpoint
    test before changing posting logic or schema.
-4. Review the admin refund flow in a real browser on desktop and mobile widths.
-   Do not expose refunds to the till credential.
+4. Plan a separate Android emulator/device verification pass for existing
+   workflows; do not extend the app into unsupported refund/tax paths without
+   first stabilizing the corresponding API and policy.
 5. Keep RBAC/MFA/audit migration work separately scoped. Do not activate or
    push migration `0006` as part of Phase 2 stabilization.
 6. After any change, run targeted tests, the full disposable suite, review the

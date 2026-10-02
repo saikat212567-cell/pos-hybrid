@@ -1,12 +1,14 @@
 # Resume here
 
-Current checkpoint: **2026-10-02**, branch **`fix/refund-reversal-foundation`**, HEAD `0f4d3c6`.
+Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**, HEAD `5d5df2d`.
 
 ## Exact verified continuation point — read this before coding
 
 The admin-only commercial refund flow is implemented and verified in `af7390e`.
-The branch is pushed. Browser markup verification also passed: the admin gate
-renders the Commercial refund section and keeps its editor hidden until unlock.
+The implementation and mobile layout fix are committed. A full admin refund
+browser flow passed against isolated local D1; details are recorded in the
+current handoff in `PROGRESS.md`. The handoff update for that verification is
+not committed yet.
 
 The atomic `POST /credit-notes` writer repair is present in committed `f9dff91` and
 the new admin-only client flow extends it without exposing refund data to till
@@ -20,6 +22,8 @@ GST/history/ITC policy limits before changing posting behavior.
    Do not use the placeholder writer/voucher/tax helpers in `refunds.js`; do not redo the completed foundation.
 4. Preserve the current policy boundary: GST-adjusting notes and non-`original_lot` stock modes remain disabled pending reviewed
     evidence and CA confirmation. Any change requires a new bounded plan and approval.
+5. Admin page browser verification is complete at desktop/mobile widths; do not
+   repeat it. The catalog table now scrolls within its container on narrow screens.
 
 No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them.
 Do not run the default migration command (it includes unreviewed 0006), `git add .`, or deployment commands.
@@ -45,8 +49,11 @@ and non-`original_lot` modes remain intentionally disabled. Planner statements m
 stock/document/journal writes in one D1 batch; planning alone restores no physical stock.
 The admin UI now loads numeric line IDs/counters from `/admin/sales/:ref`, freezes
 the exact request body and idempotency key across uncertain retries, and requires
-confirmation for commercial notes. Retain the historical-registration
-snapshot/bill-reprint issue and unverified browser/device flows. Stay in spec
+confirmation for commercial notes. The isolated browser flow proved this UI
+posts a balanced note and restores the requested stock; till credentials were
+denied. The catalog's mobile horizontal overflow was fixed. Retain the
+historical-registration snapshot/bill-reprint issue and unverified Android/device
+flows. Stay in spec
 Phase 2 stabilization, not expanded Phase 5/6 authentication.
 
 The local draft migration `0006`, worktree metadata, and `__agent__` artifacts
