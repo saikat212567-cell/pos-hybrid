@@ -67,8 +67,9 @@
   unit tests and debug APK assembly. It runs on standard GitHub-hosted Linux
   runners for this public repository and stores no APK artifact. Trigger only on
   Android/workflow changes pushed to the feature branch. First run `37060833326`
-  exposed a removed `sdkmanager tools` package from setup-android v3; the workflow
-  now uses v4. It failed before Gradle/tests, and this fix will trigger the retry.
+  exposed a removed `sdkmanager tools` package from setup-android v3; corrected
+  to setup-android v4. Retry `37061589888` succeeded: SDK setup, Android tests,
+  and debug APK assembly all passed (2m51s). APK was not uploaded/published.
 - Existing Codemagic config uses metered `linux_x2` at **$0.045/minute** under
   current published pricing; the 500-minute individual free allowance is for
   macOS M2, not Linux. Do not use Codemagic for this build when expecting it to
