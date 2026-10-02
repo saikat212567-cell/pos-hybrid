@@ -1,11 +1,12 @@
 # Resume here
 
-Current checkpoint: **2026-10-02**, branch **`fix/refund-reversal-foundation`**, HEAD `af7390e`.
+Current checkpoint: **2026-10-02**, branch **`fix/refund-reversal-foundation`**, HEAD `0f4d3c6`.
 
 ## Exact verified continuation point — read this before coding
 
 The admin-only commercial refund flow is implemented and verified in `af7390e`.
-The branch still needs the final push of this handoff documentation update.
+The branch is pushed. Browser markup verification also passed: the admin gate
+renders the Commercial refund section and keeps its editor hidden until unlock.
 
 The atomic `POST /credit-notes` writer repair is present in committed `f9dff91` and
 the new admin-only client flow extends it without exposing refund data to till

@@ -41,8 +41,9 @@
 |---|---|
 | `cd worker && npm run test:unit` | **244 passed, 0 failed** |
 | Full `npm test` against disposable Wrangler/D1 using migrations `0001`–`0005` only | **371 passed, 0 failed** |
+| Tabbit browser check of `web/admin.html` | Admin gate and Commercial refund controls rendered; editor remained hidden until admin unlock |
 | `git diff --cached --check` before commit | Passed |
-| Branch push | Pending final push of `af7390e` and this handoff update |
+| Branch push | Implementation and handoff pushed in `af7390e` and `0f4d3c6` |
 
 No production or default local database was used. Migration `0006` was not
 applied. The Wrangler process was stopped after testing.
