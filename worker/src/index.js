@@ -132,6 +132,7 @@ export default {
         route('/reports/day-book', 'GET', 'reports.view', () => reportResponse(url, env, reportDayBook)) ??
         route('/reports/integrity/stock', 'GET', 'reports.view', () => reportResponse(url, env, reportStockIntegrity)) ??
         route('/credit-notes', 'POST', 'sales.refund', () => recordCreditNoteAtomic(request, env)) ??
+        routeId('/admin/sales/:ref', 'GET', 'sales.refund', p => getSale(p.ref, url, env, true)) ??
         route('/reports/gstr1', 'GET', 'reports.gstr', () => reportGstr(url, env, gstr1)) ??
         route('/reports/gstr3b', 'GET', 'reports.gstr', () => reportGstr(url, env, gstr3b)) ??
         route('/settings', 'GET', 'settings.read', () => getSettings(env)) ??
@@ -609,7 +610,7 @@ async function addOpeningStock(id, request, env) {
  * and this exposes one sale the client already knows the ref of, not the
  * revenue history that `GET /sales` gates behind the admin token.
  */
-async function getSale(ref, url, env) {
+async function getSale(ref, url, env, adminDetail = false) {
   // ?format=58mm|80mm|a4 returns the rendered bill instead of JSON.
   //
   // Rendering server-side keeps one implementation of a legal document. A
@@ -627,8 +628,9 @@ async function getSale(ref, url, env) {
   if (!sale) return json({ error: 'unknown sale' }, 404);
 
   const { results: lines } = await env.DB.prepare(
-    `SELECT product_id, name, kind, tax_code, unit, qty, price_paise,
+    `SELECT ${adminDetail ? 'id AS sale_line_id,' : ''} product_id, name, kind, tax_code, unit, qty, price_paise,
             gst_rate_bps, taxable_paise, cgst_paise, sgst_paise, igst_paise
+            ${adminDetail ? ', qty_returnable, taxable_returnable_paise, cgst_returnable_paise, sgst_returnable_paise, igst_returnable_paise' : ''}
        FROM sale_lines WHERE sale_ref = ? ORDER BY id`
   ).bind(ref).all();
 
@@ -1454,8 +1456,12 @@ const REFUND_REASONS = new Set(['return', 'deficient', 'price_correction']);
 const STOCK_RETURN_MODES = new Set(['original_lot', 'new_lot', 'none']);
 
 function refundDate(value) {
-  if (value === undefined || value === null || value === '') return new Date();
+  if (value === undefined) return new Date();
   if (typeof value !== 'string') return null;
+  if (!/^\d{4}-\d{2}-\d{2}(?:$|[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})?$)/.test(value)) return null;
+  const calendar = value.slice(0, 10);
+  const calendarDate = new Date(calendar + 'T00:00:00Z');
+  if (Number.isNaN(calendarDate.getTime()) || calendarDate.toISOString().slice(0, 10) !== calendar) return null;
   const input = /^\d{4}-\d{2}-\d{2}$/.test(value)
     ? `${value}T00:00:00+05:30`
     : /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
@@ -1631,7 +1637,7 @@ async function recordCreditNoteAtomic(request, env) {
 
   const supplyDate = refundDate(sale.sold_at);
   if (!supplyDate) return json({ error: 'original sale has an invalid supply date' }, 500);
-  if (issuedDate < supplyDate)
+  if (istDateKey(issuedDate) < istDateKey(supplyDate))
     return json({ error: 'note_date cannot precede the original supply date' }, 400);
   if (!sale.invoice_no || !normalizeStateCode(sale.place_of_supply))
     return json({ error: 'original sale lacks required invoice and place-of-supply evidence' }, 409);
@@ -1696,7 +1702,9 @@ async function recordCreditNoteAtomic(request, env) {
   const taxPaise = safeAdd(safeAdd(cgstPaise, sgstPaise), igstPaise);
   const beforeRound = safeAdd(taxablePaise, taxPaise);
   const returned = await env.DB.prepare(
-    'SELECT COALESCE(SUM(total_paise), 0) AS total_paise FROM credit_notes WHERE sale_ref = ?'
+    `SELECT COUNT(*) AS note_count, COALESCE(SUM(total_paise), 0) AS total_paise,
+      COALESCE(SUM(taxable_paise + cgst_paise + sgst_paise + igst_paise), 0) AS gross_paise
+      FROM credit_notes WHERE sale_ref = ?`
   ).bind(original_sale_ref).first();
   if (!Number.isSafeInteger(returned.total_paise) || returned.total_paise < 0)
     return json({ error: 'existing credit-note totals are invalid' }, 500);
@@ -1718,11 +1726,11 @@ async function recordCreditNoteAtomic(request, env) {
     totalPaise = remainingInvoiceTotal;
     roundOffPaise = totalPaise - beforeRound;
   } else {
-    const rounded = roundOff(beforeRound, settings.round_off_enabled !== '0');
-    totalPaise = rounded.total;
-    roundOffPaise = rounded.adjustment;
-    if (totalPaise > remainingInvoiceTotal)
-      return json({ error: 'credit-note rounding exceeds the remaining invoice total' }, 409);
+    const originalGross = safeAdd(originalTotal, -sale.round_off_paise);
+    const cumulativeGross = safeAdd(returned.gross_paise, beforeRound);
+    const rounded = roundOff(cumulativeGross, originalTotal === roundOff(originalGross, true).total);
+    totalPaise = Math.min(originalTotal, rounded.total) - returned.total_paise;
+    roundOffPaise = totalPaise - beforeRound;
   }
   if (!Number.isSafeInteger(totalPaise) || totalPaise < 0 || !Number.isSafeInteger(roundOffPaise))
     return json({ error: 'credit-note total is outside the safe integer range' }, 400);
@@ -1751,6 +1759,15 @@ async function recordCreditNoteAtomic(request, env) {
   const noteNo = `(SELECT ? || '/' || ? || '/' || printf('%04d', last_no)
     FROM invoice_series WHERE series = ? AND fy = ?)`;
   const statements = [
+    // Count also catches concurrent zero-value notes: their quantities matter.
+    env.DB.prepare(`
+      INSERT INTO sale_lines (sale_ref, product_id, name, qty, price_paise)
+      SELECT sale_ref, product_id, name, 0, 0 FROM sale_lines
+       WHERE sale_ref = ? AND (
+         (SELECT COUNT(*) FROM credit_notes WHERE sale_ref = ?) != ? OR
+         (SELECT COALESCE(SUM(total_paise), 0) FROM credit_notes WHERE sale_ref = ?) != ?)
+    `).bind(original_sale_ref, original_sale_ref, returned.note_count,
+      original_sale_ref, returned.total_paise),
     env.DB.prepare(`
       INSERT INTO invoice_series (series, fy, last_no) VALUES (?, ?, 1)
       ON CONFLICT(series, fy) DO UPDATE SET last_no = last_no + 1

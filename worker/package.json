@@ -9,9 +9,9 @@
     "migrate": "wrangler d1 migrations apply pos --remote",
     "//test": "Start the dev server first: npm run dev:test (in another shell)",
     "dev:test": "wrangler dev --port 8801 --local --var POS_TOKEN:test-token --var POS_ADMIN_TOKEN:admin-token-x",
-    "test": "node --test test/gst.test.js test/fifo.test.js test/fy.test.js test/bill.test.js test/items.test.js test/ledger.test.js test/web-charge.test.js test/gstr.test.js test/api.test.js test/worker-load.test.js test/auth-legacy.test.js test/api-recovery.test.js test/reports.test.js test/report-recovery.test.js test/api-report-http.test.js test/refunds.test.js test/credit-note-http.test.js",
+    "test": "node --test test/gst.test.js test/fifo.test.js test/fy.test.js test/bill.test.js test/items.test.js test/ledger.test.js test/web-charge.test.js test/web-refund.test.js test/gstr.test.js test/api.test.js test/worker-load.test.js test/auth-legacy.test.js test/api-recovery.test.js test/reports.test.js test/report-recovery.test.js test/api-report-http.test.js test/refunds.test.js test/credit-note-http.test.js",
     "//test:unit": "Engines, auth, reports and Worker handlers: no server, no persistent D1.",
-    "test:unit": "node --test test/gst.test.js test/fifo.test.js test/fy.test.js test/bill.test.js test/items.test.js test/ledger.test.js test/web-charge.test.js test/gstr.test.js test/worker-load.test.js test/auth-legacy.test.js test/api-recovery.test.js test/reports.test.js test/report-recovery.test.js test/refunds.test.js test/credit-note-http.test.js"
+    "test:unit": "node --test test/gst.test.js test/fifo.test.js test/fy.test.js test/bill.test.js test/items.test.js test/ledger.test.js test/web-charge.test.js test/web-refund.test.js test/gstr.test.js test/worker-load.test.js test/auth-legacy.test.js test/api-recovery.test.js test/reports.test.js test/report-recovery.test.js test/refunds.test.js test/credit-note-http.test.js"
   },
   "devDependencies": {
     "wrangler": "4.136.3"

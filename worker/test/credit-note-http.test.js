@@ -33,7 +33,7 @@ function fixture(t) {
       if (beforeBatch) {
         const hook = beforeBatch;
         beforeBatch = null;
-        hook();
+        await hook();
       }
       sqlite.exec('BEGIN');
       try {
@@ -302,4 +302,78 @@ test('over-return is rejected atomically and tax-adjusting notes stay disabled',
     lines: [{ sale_line_id: saleLine.id, qty: 1 }], refund_mode: 'cash', tax_adjusted: 1,
   }});
   assert.equal(taxResponse.status, 409);
+});
+
+async function serviceSale(f, prices = [40, 40, 40]) {
+  for (const [i, price] of prices.entries()) f.sqlite.prepare(`INSERT INTO products
+    (id, name, price, category, kind, tax_code, gst_rate_bps, unit)
+    VALUES (?, ?, ?, 'refunds', 'service', '9983', 0, 'NA')`).run(`svc${i}`, `Service ${i}`, price);
+  assert.equal((await f.call('/sales', { method: 'POST', body: {
+    client_ref: 'service-refund-sale', total: 0,
+    items: prices.map((_, i) => ({ id: `svc${i}`, qty: 1 })),
+  } })).status, 201);
+  return f.sqlite.prepare('SELECT id FROM sale_lines WHERE sale_ref = ? ORDER BY id').all('service-refund-sale');
+}
+
+function returnBody(id, ref = `return-${id}`) {
+  return { client_ref: ref, original_sale_ref: 'service-refund-sale',
+    lines: [{ sale_line_id: id, qty: 1 }], refund_mode: 'cash', tax_adjusted: 0,
+    stock_return_mode: 'original_lot' };
+}
+
+test('admin detail exposes numeric return IDs and counters without changing till reprints', async t => {
+  const f = fixture(t);
+  const rows = await serviceSale(f);
+  for (const token of [TOKEN, 'invalid']) {
+    assert.equal((await f.call('/admin/sales/service-refund-sale', { token })).status, 401);
+    assert.equal((await f.call('/credit-notes', { token, method: 'POST', body: returnBody(rows[0].id) })).status, 401);
+  }
+  const detail = await (await f.call('/admin/sales/service-refund-sale')).json();
+  assert.equal(detail.sale.lines[0].sale_line_id, rows[0].id);
+  assert.equal(detail.sale.lines[0].qty_returnable, 1);
+  const till = await (await f.call('/sales/service-refund-sale', { token: TOKEN })).json();
+  assert.equal('sale_line_id' in till.sale.lines[0], false);
+  assert.equal('qty_returnable' in till.sale.lines[0], false);
+  const other = fixture(t);
+  assert.equal((await other.call('/admin/sales/service-refund-sale')).status, 404);
+});
+
+test('concurrent returns on different lines reject stale invoice snapshots and close exactly', async t => {
+  const f = fixture(t);
+  const rows = await serviceSale(f, [40, 40]);
+  f.setBeforeBatch(async () => {
+    assert.equal((await f.call('/credit-notes', { method: 'POST', body: returnBody(rows[1].id) })).status, 201);
+  });
+  const stale = await f.call('/credit-notes', { method: 'POST', body: returnBody(rows[0].id) });
+  assert.equal(stale.status, 409);
+  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM credit_notes').get().n, 1);
+  assert.equal((await f.call('/credit-notes', { method: 'POST', body: returnBody(rows[0].id) })).status, 201);
+  assert.equal(f.sqlite.prepare('SELECT SUM(total_paise) total FROM credit_notes').get().total, 100);
+  assert.equal(f.sqlite.prepare("SELECT last_no FROM invoice_series WHERE series='CN'").get().last_no, 2);
+});
+
+test('small partial returns cannot strand remaining quantities through repeated rounding', async t => {
+  const f = fixture(t);
+  const rows = await serviceSale(f, [60, 60, 60, 60]);
+  for (const row of rows) assert.equal((await f.call('/credit-notes', {
+    method: 'POST', body: returnBody(row.id),
+  })).status, 201);
+  const result = f.sqlite.prepare('SELECT SUM(total_paise) total, SUM(round_off_paise) rounding FROM credit_notes').get();
+  assert.equal(result.total, 200);
+  assert.equal(result.rounding, -40);
+  assert.equal(f.sqlite.prepare('SELECT SUM(debit_paise-credit_paise) net FROM voucher_lines').get().net, 0);
+});
+
+test('refund dates accept the supply calendar day and reject normalized invalid dates', async t => {
+  const f = fixture(t);
+  const rows = await serviceSale(f);
+  f.sqlite.prepare("UPDATE sales SET sold_at='2026-01-01 12:00:00' WHERE client_ref='service-refund-sale'").run();
+  for (const date of ['2026-02-30', '', 'garbage', '2025-12-31']) {
+    assert.equal((await f.call('/credit-notes', { method: 'POST', body: {
+      ...returnBody(rows[0].id), note_date: date,
+    } })).status, 400, date);
+  }
+  assert.equal((await f.call('/credit-notes', { method: 'POST', body: {
+    ...returnBody(rows[0].id), note_date: '2026-01-01',
+  } })).status, 201);
 });

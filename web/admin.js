@@ -14,6 +14,10 @@
 var Admin = (function () {
   var token = '';
   var items = [];
+  var refundSale = null;
+  var refundPending = null;
+  var refundBusy = false;
+  var refundLoadVersion = 0;
 
   var $ = function (id) { return document.getElementById(id); };
   var money = function (paise) { return (paise / 100).toFixed(2); };
@@ -335,6 +339,110 @@ var Admin = (function () {
     }
   }
 
+  function refundControls() {
+    $('refund-ref').disabled = refundBusy || !!refundPending;
+    $('refund-load').disabled = refundBusy || !!refundPending;
+    $('refund-editor').disabled = refundBusy || !!refundPending || !refundSale;
+    $('refund-submit').disabled = refundBusy || (!refundPending && !refundSale);
+    $('refund-submit').textContent = refundPending ? 'Retry same refund' : 'Confirm commercial refund';
+  }
+
+  function clearRefundSale() {
+    refundLoadVersion++;
+    refundSale = null;
+    $('refund-sale').textContent = '';
+    $('refund-lines').innerHTML = '';
+    $('refund-editor').hidden = true;
+    refundControls();
+  }
+
+  async function loadRefundSale() {
+    if (refundBusy || refundPending) return;
+    clearRefundSale();
+    var version = refundLoadVersion;
+    var ref = $('refund-ref').value.trim();
+    if (!ref) return say('refund-msg', 'Enter the original sale reference.', 'bad');
+    refundBusy = true;
+    refundControls();
+    say('refund-msg', 'Loading sale...');
+    try {
+      var res = await api('/admin/sales/' + encodeURIComponent(ref));
+      if (!res.ok) throw new Error(await errorText(res));
+      var body = await res.json();
+      if (version !== refundLoadVersion || $('refund-ref').value.trim() !== ref) return;
+      if (!body.sale || body.sale.client_ref !== ref || !Array.isArray(body.sale.lines))
+        throw new Error('Invalid sale response.');
+      refundSale = body.sale;
+      $('refund-sale').textContent = 'Invoice ' + refundSale.invoice_no + ' | Original total INR ' + money(refundSale.total_paise);
+      $('refund-lines').innerHTML = refundSale.lines.map(function (line) {
+        return '<tr><td>' + esc(line.name) + ' (' + esc(line.kind) + ')</td><td>' + esc(line.qty) +
+          '</td><td>' + esc(line.qty_returnable) + '</td><td><input aria-label="Return quantity for ' +
+          esc(line.name) + '" data-refund-line="' + esc(line.sale_line_id) + '" type="number" min="0" max="' +
+          esc(line.qty_returnable) + '" step="1" value="0"' + (line.qty_returnable ? '' : ' disabled') + '></td></tr>';
+      }).join('');
+      $('refund-editor').hidden = false;
+      say('refund-msg', 'Select quantities to return.');
+    } catch (err) {
+      if (version === refundLoadVersion) say('refund-msg', err.message, 'bad');
+    } finally {
+      refundBusy = false;
+      refundControls();
+    }
+  }
+
+  async function submitRefund() {
+    if (refundBusy) return;
+    if (!refundPending) {
+      if (!refundSale || refundSale.client_ref !== $('refund-ref').value.trim()) return;
+      var lines = [];
+      var summary = [];
+      var inputs = $('refund-lines').querySelectorAll('input');
+      for (var input of inputs) {
+        var qty = Number(input.value);
+        var id = Number(input.dataset.refundLine);
+        var stored = refundSale.lines.find(function (line) { return line.sale_line_id === id; });
+        if (!stored || !Number.isSafeInteger(qty) || qty < 0 || qty > stored.qty_returnable)
+          return say('refund-msg', 'Use whole quantities within the returnable limits.', 'bad');
+        if (qty) { lines.push({ sale_line_id: id, qty: qty }); summary.push(stored.name + ': ' + qty); }
+      }
+      if (!lines.length) return say('refund-msg', 'Select at least one quantity.', 'bad');
+      if (!confirm('Create commercial credit note for ' + refundSale.invoice_no + '?\n' + summary.join('\n') +
+        '\nSettlement: ' + $('refund-mode').selectedOptions[0].textContent +
+        '\nGST output tax will NOT be reduced. Saleable goods return to original lots.')) return;
+      // Serialize once: edits and unknown-result retries must never change this request.
+      refundPending = JSON.stringify({ client_ref: crypto.randomUUID(), original_sale_ref: refundSale.client_ref,
+        lines: lines, refund_mode: $('refund-mode').value, reason: $('refund-reason').value,
+        stock_return_mode: 'original_lot', tax_adjusted: 0, source: 'web' });
+    }
+    refundBusy = true;
+    refundControls();
+    say('refund-msg', 'Recording refund...');
+    try {
+      var res = await api('/credit-notes', { method: 'POST', body: refundPending });
+      var body = await res.json();
+      if (!res.ok || !body.ok || typeof body.credit_note_no !== 'string') {
+        // Only explicit validation/conflict responses establish non-commit.
+        if ([400, 404, 409].includes(res.status) && typeof body.error === 'string') {
+          refundPending = null;
+          clearRefundSale();
+          say('refund-msg', body.error + ' Load the sale again before creating a new refund.', 'bad');
+          return;
+        }
+        throw new Error(body.error || 'Unrecognized response');
+      }
+      refundPending = null;
+      clearRefundSale();
+      say('refund-msg', 'Recorded credit note ' + body.credit_note_no +
+        (body.duplicate ? ' (confirmed existing refund).' : '.') + ' Load the sale again to refresh returnable quantities.', 'ok');
+      loadItems();
+    } catch (err) {
+      say('refund-msg', 'Result unknown: ' + err.message + '. Keep this tab open and retry the same refund. Do not create another refund.', 'bad');
+    } finally {
+      refundBusy = false;
+      refundControls();
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Wiring
   // -------------------------------------------------------------------------
@@ -347,6 +455,14 @@ var Admin = (function () {
   $('create').addEventListener('click', create);
   $('reset').addEventListener('click', resetForm);
   $('save-settings').addEventListener('click', saveSettings);
+  $('refund-load').addEventListener('click', loadRefundSale);
+  $('refund-submit').addEventListener('click', submitRefund);
+  $('refund-ref').addEventListener('input', function () {
+    if (!refundPending) clearRefundSale();
+  });
+  window.addEventListener('beforeunload', function (event) {
+    if (refundPending) { event.preventDefault(); event.returnValue = ''; }
+  });
 
   // A service has no unit to count and no stock, so those inputs are disabled
   // rather than silently ignored — a form that accepts input it will discard is

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>POS — Items &amp; Settings</title>
+<title>POS — Admin</title>
 
 <style>
   :root {
@@ -54,6 +54,9 @@
   .msg.bad { color: var(--bad); font-weight: 600; }
   .gate { max-width: 420px; margin: 12vh auto; }
   .note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .table-scroll { overflow-x: auto; }
+  #refund-editor { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
+  #refund-lines input { min-width: 80px; }
 </style>
 </head>
 
@@ -83,11 +86,41 @@
 <div class="wrap" id="app" hidden>
 
   <header>
-    <h1>Items &amp; Settings</h1>
+    <h1>Items, Refunds &amp; Settings</h1>
     <a href="index.html">← Back to till</a>
     <a href="reports.html">→ Reports &amp; GSTR</a>
     <span id="status" class="note" style="margin-left:auto" role="status" aria-live="polite"></span>
   </header>
+
+  <section class="card" aria-labelledby="refund-heading">
+    <h2 id="refund-heading">Commercial refund</h2>
+    <p class="note">Creates a commercial credit note. Output GST is not reduced or adjusted in GST returns.
+      Saleable goods return to their original stock lots; services have no stock movement.
+      Damaged goods, new lots and GST-adjusting notes are not supported here.</p>
+    <label for="refund-ref">Original sale reference</label>
+    <input id="refund-ref" autocomplete="off">
+    <div class="actions"><button id="refund-load">Load sale</button></div>
+    <p id="refund-sale" class="note"></p>
+    <fieldset id="refund-editor" disabled hidden>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Item</th><th>Sold</th><th>Returnable</th><th>Return quantity</th></tr></thead>
+        <tbody id="refund-lines"></tbody>
+      </table></div>
+      <div class="grid">
+        <div><label for="refund-mode">Refund settlement</label>
+          <select id="refund-mode"><option value="cash">Cash</option><option value="upi">UPI</option>
+            <option value="card">Card</option><option value="bank">Bank</option>
+            <option value="credit">Reduce receivable</option></select></div>
+        <div><label for="refund-reason">Reason</label>
+          <select id="refund-reason"><option value="return">Return</option>
+            <option value="deficient">Deficient supply</option><option value="price_correction">Price correction</option></select></div>
+      </div>
+      <p class="note">The server allocates stored invoice amounts and rounding. This records settlement in the books;
+        it does not send a bank or card payment.</p>
+    </fieldset>
+    <div class="actions"><button class="primary" id="refund-submit" disabled>Confirm commercial refund</button></div>
+    <p class="msg" id="refund-msg" role="status" aria-live="polite"></p>
+  </section>
 
   <!-- ------------------------------------------------------------------ -->
   <!-- Add an item                                                        -->
