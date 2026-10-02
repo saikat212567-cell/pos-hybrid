@@ -1,14 +1,13 @@
 # Resume here
 
-Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**, HEAD `5d5df2d`.
+Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**, HEAD `7cfdfbf`.
 
 ## Exact verified continuation point — read this before coding
 
 The admin-only commercial refund flow is implemented and verified in `af7390e`.
-The implementation and mobile layout fix are committed. A full admin refund
-browser flow passed against isolated local D1; details are recorded in the
-current handoff in `PROGRESS.md`. The handoff update for that verification is
-not committed yet.
+The implementation and mobile layout fix are committed and pushed. A full admin
+refund browser flow passed against isolated local D1; details are recorded in
+the current handoff in `PROGRESS.md`.
 
 The atomic `POST /credit-notes` writer repair is present in committed `f9dff91` and
 the new admin-only client flow extends it without exposing refund data to till

@@ -4,7 +4,7 @@
 
 **Branch:** `fix/refund-reversal-foundation`
 
-**Current HEAD:** `5d5df2d` (`fix: contain admin catalog overflow on mobile`)
+**Current HEAD:** `7cfdfbf` (`docs: record end-to-end refund verification`)
 
 **Remote:** `origin/fix/refund-reversal-foundation`
 
@@ -50,7 +50,7 @@
 | Tabbit desktop/mobile widths | At 1440px desktop, no horizontal overflow. At 390px mobile, document width 375px; catalog table scrolls in its 319px container (table content width 549px) |
 | `node --check src/index.js` plus `node --check` new tests | Passed in prior implementation verification; no JS source changed in this responsive fix |
 | `git diff --cached --check` before commit | Passed |
-| Branch push | Previous implementation/docs at `ab9dcaa`; responsive fix and this handoff pending commit/push |
+| Branch push | Implementation, responsive fix, and handoff are pushed through `7cfdfbf` |
 
 The browser flow used a fresh disposable D1 under
 `C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by
