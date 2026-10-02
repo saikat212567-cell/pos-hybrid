@@ -73,7 +73,9 @@
 - Existing Codemagic config uses metered `linux_x2` at **$0.045/minute** under
   current published pricing; the 500-minute individual free allowance is for
   macOS M2, not Linux. Do not use Codemagic for this build when expecting it to
-  be free.
+  be free. A separate `android-fast-verify` workflow is now configured in
+  `codemagic.yaml`; connect the repository in Codemagic UI and select that
+  workflow to use the faster runner. No Codemagic build was triggered here.
 
 The browser flow used a fresh disposable D1 under
 `C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by
@@ -116,9 +118,8 @@ approved schema/auth/audit plan.
   damage/write-off and ITC reversal require a separate reviewed implementation.
 - Active auth is still the legacy till/admin-token boundary. JWT, API-key, MFA,
   RBAC, and immutable audit behavior are not enabled or production-certified.
-- Android, printer, and deployment flows were not exercised. Android build/test
-  is being moved to free GitHub-hosted Actions because Codemagic's configured
-  `linux_x2` runner is metered; no cloud build has completed yet.
+- Android build/test passed on free GitHub-hosted Actions run `37061589888`.
+  Printer, device, deployment, and Codemagic-specific flows remain unexercised.
 - No lint, format, or type-check scripts are configured in `worker/package.json`.
 
 ### Next Session Plan
@@ -134,14 +135,18 @@ approved schema/auth/audit plan.
 4. Plan a separate Android emulator/device verification pass for existing
    workflows; do not extend the app into unsupported refund/tax paths without
    first stabilizing the corresponding API and policy.
-5. Obtain CA confirmation for the GST reminder above before enabling tax
+5. If a faster Codemagic build is desired, connect the repository in the
+   Codemagic UI, enable billing for `linux_x2` or deliberately select the free
+   `mac_mini_m2`, then run only `android-fast-verify`. Do not configure release
+   variables or tags for this verification step.
+6. Obtain CA confirmation for the GST reminder above before enabling tax
    adjustment or damage/ITC posting behavior.
-6. When deployment/admin-login work is scheduled, design a server-side
+7. When deployment/admin-login work is scheduled, design a server-side
    username/password flow with an approved auth schema/session/security plan;
    current token gate is not username/password authentication.
-7. Keep RBAC/MFA/audit migration work separately scoped. Do not activate or
+8. Keep RBAC/MFA/audit migration work separately scoped. Do not activate or
    push migration `0006` as part of Phase 2 stabilization.
-8. After any change, run targeted tests, the full disposable suite, review the
+9. After any change, run targeted tests, the full disposable suite, review the
    diff, update this section, and push only the intended commit.
 
 ---

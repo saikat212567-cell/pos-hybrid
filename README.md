@@ -47,20 +47,28 @@ never lands in git history. Paste yours into your local copy only.
 
 ## 3. Android APK
 
-Built on Codemagic, delivered through GitHub Releases. Setup steps are in the
-comment at the top of [codemagic.yaml](codemagic.yaml). Short version:
+Built on Codemagic, with a non-release verification workflow and an opt-in
+GitHub Release workflow. Setup steps are in the comment at the top of
+[codemagic.yaml](codemagic.yaml). Short version:
 
 1. codemagic.io → sign up with GitHub → add `pos-hybrid` as an Android app.
 2. Create two variable groups: `posapi` (`API_BASE`, `API_TOKEN`) and `github`
    (`GH_TOKEN` with `repo` scope). Mark all three Secure.
-3. Push to `main` → builds and emails you the APK.
-4. Tag a release → builds and publishes to GitHub Releases:
+3. Select `android-fast-verify` on
+   `fix/refund-reversal-foundation` → runs tests and builds a debug APK without
+   publishing a release.
+4. For production-style release publishing, push to `main` or tag a release:
 
 ```bash
 git tag v1.0 && git push origin v1.0
 ```
 
 Open that release page on the phone and install the `.apk` directly.
+
+Codemagic's faster `linux_x2` machine is metered at `$0.045/minute`. If billing
+is not enabled, select `mac_mini_m2` in the Codemagic UI for the free monthly
+allowance, accepting a slower Android build. Do not add API or GitHub release
+credentials to the verification workflow.
 
 To build locally instead (needs JDK 17 + Android SDK):
 

@@ -1,11 +1,14 @@
-# Codemagic build config. Builds the APK in the cloud and emails it to you.
+# Codemagic build config. The fast verification workflow builds the APK in the
+# cloud without publishing it. The release workflow below remains opt-in.
 # Docs: https://docs.codemagic.io/yaml/yaml-getting-started/
 #
 # One-time setup in the Codemagic UI (I can't do this part for you):
 #   1. codemagic.io -> sign up with GitHub -> authorize access to pos-hybrid.
 #   2. Add application -> pick saikat212567-cell/pos-hybrid -> "Android app".
-#   3. It detects this file automatically. Pick the `android-debug` workflow.
-#   4. Environment variables -> create group `posapi` with:
+#   3. It detects this file automatically. Pick `android-fast-verify` for the
+#      feature branch, or `android-debug` for main/tag release builds.
+#   4. The fast workflow needs no environment variables. For a connected APK,
+#      create group `posapi` with:
 #        API_BASE  = https://pos-api.your-subdomain.workers.dev
 #        API_TOKEN = the value you set with `wrangler secret put POS_TOKEN`
 #   5. Create group `github` with:
@@ -15,15 +18,57 @@
 #      Tick "Secure" on all three so they're masked in build logs.
 #   6. Start your first build.
 #
-# Push to main      -> builds, emails you the APK.
-# Push a v* tag     -> builds, and publishes the APK to GitHub Releases.
-#                      Release assets don't count against the Actions
-#                      artifact storage quota.
+# `android-fast-verify` uses the faster Linux X2 machine and is metered at
+# $0.045/minute. If billing is not enabled, select the free `mac_mini_m2`
+# machine in the Codemagic UI instead, accepting a slower Android build.
+# Push a v* tag     -> the opt-in release workflow publishes to GitHub Releases.
 
 workflows:
+  android-fast-verify:
+    name: POS Android Fast Verification
+    instance_type: linux_x2
+    max_build_duration: 30
+
+    environment:
+      java: 17
+
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: fix/refund-reversal-foundation
+          include: true
+        - pattern: main
+          include: true
+          source: false
+      cancel_previous_builds: true
+
+    scripts:
+      - name: Android tests and debug APK
+        working_directory: android
+        script: gradle test assembleDebug --no-daemon
+
+    artifacts:
+      - android/app/build/outputs/**/*.apk
+      - android/app/build/reports/tests/**
+
+    publishing:
+      email:
+        recipients:
+          - saikat212567@gmail.com
+        notify:
+          success: true
+          failure: true
+
   android-debug:
     name: POS Android Debug APK
-    # Free tier runs on Linux. Android needs no macOS machine.
+    # Release workflow. Linux X2 is metered; enable billing before selecting it.
     instance_type: linux_x2
     max_build_duration: 30
 
