@@ -32,8 +32,9 @@ GST/history/ITC policy limits before changing posting behavior.
 8. Android heavy builds should use standard GitHub-hosted Actions (repo is
    public). Codemagic's configured `linux_x2` rate is metered at $0.045/min.
    `.github/workflows/android-verify.yml` runs unit tests and assembles the debug
-   APK without publishing it. It has not run yet; push its commit to this feature
-   branch to trigger it, then inspect the Actions job result.
+   APK without publishing it. First run failed before tests because setup-android
+   v3 requests the removed SDK `tools` package; v4 fixes this. Push the update and
+   inspect the retry's Actions result.
 
 No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them.
 Do not run the default migration command (it includes unreviewed 0006), `git add .`, or deployment commands.

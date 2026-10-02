@@ -66,8 +66,9 @@
   `.github/workflows/android-verify.yml`: Java 17, Gradle 8.9, Android SDK 34,
   unit tests and debug APK assembly. It runs on standard GitHub-hosted Linux
   runners for this public repository and stores no APK artifact. Trigger only on
-  Android/workflow changes pushed to the feature branch. No cloud run
-  has completed yet; the workflow must be pushed to trigger GitHub Actions.
+  Android/workflow changes pushed to the feature branch. First run `37060833326`
+  exposed a removed `sdkmanager tools` package from setup-android v3; the workflow
+  now uses v4. It failed before Gradle/tests, and this fix will trigger the retry.
 - Existing Codemagic config uses metered `linux_x2` at **$0.045/minute** under
   current published pricing; the 500-minute individual free allowance is for
   macOS M2, not Linux. Do not use Codemagic for this build when expecting it to
