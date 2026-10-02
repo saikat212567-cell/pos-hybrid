@@ -30,11 +30,10 @@ GST/history/ITC policy limits before changing posting behavior.
    admin page uses a `POS_ADMIN_TOKEN` gate, not username/password auth; leave
    credentials/deployment untouched until a reviewed server-auth plan is approved.
 8. Android heavy builds should use standard GitHub-hosted Actions (repo is
-   public). Codemagic's configured `linux_x2` rate is metered at $0.045/min.
-   `.github/workflows/android-verify.yml` runs unit tests and assembles the debug
-   APK without publishing it. First run failed because setup-android v3 requested
-   the removed SDK `tools` package; v4 fixed it. Retry `37061589888` succeeded
-   (SDK setup, tests, and debug APK assembly); no APK artifact is published.
+   public), which already passed run `37061589888`. Codemagic's
+   `android-fast-verify` now uses free `mac_mini_m2`; `linux_x2` requires billing
+   at $0.045/min. The Codemagic workflow runs tests and assembles a debug APK
+   without publishing a release.
 
 No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them.
 Do not run the default migration command (it includes unreviewed 0006), `git add .`, or deployment commands.

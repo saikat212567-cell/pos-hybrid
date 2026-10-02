@@ -65,10 +65,10 @@ git tag v1.0 && git push origin v1.0
 
 Open that release page on the phone and install the `.apk` directly.
 
-Codemagic's faster `linux_x2` machine is metered at `$0.045/minute`. If billing
-is not enabled, select `mac_mini_m2` in the Codemagic UI for the free monthly
-allowance, accepting a slower Android build. Do not add API or GitHub release
-credentials to the verification workflow.
+The verification workflow uses `mac_mini_m2`, which is available on the free
+individual plan. Codemagic's faster `linux_x2` machine requires billing and is
+metered at `$0.045/minute`. Do not add API or GitHub release credentials to the
+verification workflow.
 
 To build locally instead (needs JDK 17 + Android SDK):
 

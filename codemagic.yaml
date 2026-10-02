@@ -18,15 +18,14 @@
 #      Tick "Secure" on all three so they're masked in build logs.
 #   6. Start your first build.
 #
-# `android-fast-verify` uses the faster Linux X2 machine and is metered at
-# $0.045/minute. If billing is not enabled, select the free `mac_mini_m2`
-# machine in the Codemagic UI instead, accepting a slower Android build.
+# `android-fast-verify` uses the free individual-plan `mac_mini_m2` machine.
+# Linux X2 is faster but requires a billing-enabled Codemagic plan.
 # Push a v* tag     -> the opt-in release workflow publishes to GitHub Releases.
 
 workflows:
   android-fast-verify:
     name: POS Android Fast Verification
-    instance_type: linux_x2
+    instance_type: mac_mini_m2
     max_build_duration: 30
 
     environment:
@@ -68,8 +67,8 @@ workflows:
 
   android-debug:
     name: POS Android Debug APK
-    # Release workflow. Linux X2 is metered; enable billing before selecting it.
-    instance_type: linux_x2
+    # Release workflow. Keep on the free machine until paid billing is enabled.
+    instance_type: mac_mini_m2
     max_build_duration: 30
 
     environment:

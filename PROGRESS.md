@@ -70,12 +70,11 @@
   exposed a removed `sdkmanager tools` package from setup-android v3; corrected
   to setup-android v4. Retry `37061589888` succeeded: SDK setup, Android tests,
   and debug APK assembly all passed (2m51s). APK was not uploaded/published.
-- Existing Codemagic config uses metered `linux_x2` at **$0.045/minute** under
-  current published pricing; the 500-minute individual free allowance is for
-  macOS M2, not Linux. Do not use Codemagic for this build when expecting it to
-  be free. A separate `android-fast-verify` workflow is now configured in
-  `codemagic.yaml`; connect the repository in Codemagic UI and select that
-  workflow to use the faster runner. No Codemagic build was triggered here.
+- Codemagic's `android-fast-verify` workflow now uses `mac_mini_m2`, which is
+  available on the free individual plan. The faster `linux_x2` machine is
+  metered at **$0.045/minute** and requires billing. Connect the repository in
+  Codemagic UI and select `android-fast-verify`; no Codemagic build was triggered
+  from this session.
 
 The browser flow used a fresh disposable D1 under
 `C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by
@@ -135,10 +134,10 @@ approved schema/auth/audit plan.
 4. Plan a separate Android emulator/device verification pass for existing
    workflows; do not extend the app into unsupported refund/tax paths without
    first stabilizing the corresponding API and policy.
-5. If a faster Codemagic build is desired, connect the repository in the
-   Codemagic UI, enable billing for `linux_x2` or deliberately select the free
-   `mac_mini_m2`, then run only `android-fast-verify`. Do not configure release
-   variables or tags for this verification step.
+5. Connect the repository in Codemagic UI, select the free `mac_mini_m2`, and
+   run only `android-fast-verify`. Do not configure release variables or tags
+   for this verification step. Use `linux_x2` only after deliberately enabling
+   billing.
 6. Obtain CA confirmation for the GST reminder above before enabling tax
    adjustment or damage/ITC posting behavior.
 7. When deployment/admin-login work is scheduled, design a server-side
