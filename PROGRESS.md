@@ -75,6 +75,11 @@
   metered at **$0.045/minute** and requires billing. Connect the repository in
   Codemagic UI and select `android-fast-verify`; no Codemagic build was triggered
   from this session.
+- The first Codemagic APK had an empty catalog because the verification workflow
+  built without `API_BASE`/`API_TOKEN`, which Android injects into `BuildConfig`.
+  The workflow now imports secure group `posapi`, fails if either value is absent,
+  and passes both to Gradle. Add the deployed Worker URL and till `POS_TOKEN` in
+  Codemagic before rebuilding; never commit either value.
 
 The browser flow used a fresh disposable D1 under
 `C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by

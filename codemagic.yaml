@@ -7,8 +7,7 @@
 #   2. Add application -> pick saikat212567-cell/pos-hybrid -> "Android app".
 #   3. It detects this file automatically. Pick `android-fast-verify` for the
 #      feature branch, or `android-debug` for main/tag release builds.
-#   4. The fast workflow needs no environment variables. For a connected APK,
-#      create group `posapi` with:
+#   4. Create group `posapi` with the deployed Worker URL and till token:
 #        API_BASE  = https://pos-api.your-subdomain.workers.dev
 #        API_TOKEN = the value you set with `wrangler secret put POS_TOKEN`
 #   5. Create group `github` with:
@@ -30,6 +29,8 @@ workflows:
 
     environment:
       java: 17
+      groups:
+        - posapi      # API_BASE, API_TOKEN; mark both Secure
 
     cache:
       cache_paths:
@@ -49,9 +50,17 @@ workflows:
       cancel_previous_builds: true
 
     scripts:
+      - name: Require API configuration
+        script: |
+          test -n "$API_BASE" || { echo "API_BASE is missing"; exit 1; }
+          test -n "$API_TOKEN" || { echo "API_TOKEN is missing"; exit 1; }
+
       - name: Android tests and debug APK
         working_directory: android
-        script: gradle test assembleDebug --no-daemon
+        script: |
+          gradle test assembleDebug --no-daemon \
+            -PapiBase="$API_BASE" \
+            -PapiToken="$API_TOKEN"
 
     artifacts:
       - android/app/build/outputs/**/*.apk

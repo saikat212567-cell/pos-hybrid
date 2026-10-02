@@ -52,8 +52,9 @@ GitHub Release workflow. Setup steps are in the comment at the top of
 [codemagic.yaml](codemagic.yaml). Short version:
 
 1. codemagic.io → sign up with GitHub → add `pos-hybrid` as an Android app.
-2. Create two variable groups: `posapi` (`API_BASE`, `API_TOKEN`) and `github`
-   (`GH_TOKEN` with `repo` scope). Mark all three Secure.
+2. Create variable group `posapi` with `API_BASE` set to the deployed Worker URL
+   and `API_TOKEN` set to the till `POS_TOKEN`. Mark both Secure. The verification
+   build fails clearly if either value is missing.
 3. Select `android-fast-verify` on
    `fix/refund-reversal-foundation` → runs tests and builds a debug APK without
    publishing a release.

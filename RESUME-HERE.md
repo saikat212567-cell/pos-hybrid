@@ -33,7 +33,9 @@ GST/history/ITC policy limits before changing posting behavior.
    public), which already passed run `37061589888`. Codemagic's
    `android-fast-verify` now uses free `mac_mini_m2`; `linux_x2` requires billing
    at $0.045/min. The Codemagic workflow runs tests and assembles a debug APK
-   without publishing a release.
+   without publishing a release. It requires secure variable group `posapi`
+   containing deployed Worker `API_BASE` and till `API_TOKEN`; otherwise the APK
+   intentionally fails instead of silently showing an empty catalog.
 
 No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them.
 Do not run the default migration command (it includes unreviewed 0006), `git add .`, or deployment commands.
