@@ -1,6 +1,6 @@
 # Resume here
 
-Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**, HEAD `7cfdfbf`.
+Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Implementation checkpoint `5d5df2d`; use `git log` for the current documentation tip.
 
 ## Exact verified continuation point — read this before coding
 
