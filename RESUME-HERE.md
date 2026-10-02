@@ -1,19 +1,20 @@
 # Resume here
 
-Current checkpoint: **2026-10-01**, branch **`fix/refund-reversal-foundation`**, HEAD `f9dff91`.
+Current checkpoint: **2026-10-02**, branch **`fix/refund-reversal-foundation`**, HEAD `af7390e`.
 
 ## Exact verified continuation point — read this before coding
 
-**Not pushed:** the user requested a push only if all work was complete, otherwise a saved handoff.
-The full refund feature is not complete. Completed recovery/foundation changes remain **local, uncommitted and unpushed**;
-a fresh clone will not contain them. Preserve this working directory and its staged/unstaged/untracked project files.
+The admin-only commercial refund flow is implemented and verified in `af7390e`.
+The branch still needs the final push of this handoff documentation update.
 
-The atomic `POST /credit-notes` writer repair is present in committed `f9dff91` and verified. Do not redo it; review any
-follow-up against the remaining GST/history/ITC policy limits before changing posting behavior.
+The atomic `POST /credit-notes` writer repair is present in committed `f9dff91` and
+the new admin-only client flow extends it without exposing refund data to till
+credentials. Do not redo the writer; review follow-up against the remaining
+GST/history/ITC policy limits before changing posting behavior.
 
 1. Confirm branch and Git status; do not reset, stash, overwrite, or batch-stage inherited work.
-2. Run the serverless baseline (`cd worker && npm run test:unit`, verified **236 passed**).
-    Then establish a disposable local D1 with migrations **0001–0005 only** for the full baseline (verified **363 passed**).
+2. Run the serverless baseline (`cd worker && npm run test:unit`, verified **244 passed**).
+    Then establish a disposable local D1 with migrations **0001–0005 only** for the full baseline (verified **371 passed**).
 3. Reuse tested `planReturn` in `worker/src/refunds.js` and `creditNoteVoucherLines` in `worker/src/ledger.js`.
    Do not use the placeholder writer/voucher/tax helpers in `refunds.js`; do not redo the completed foundation.
 4. Preserve the current policy boundary: GST-adjusting notes and non-`original_lot` stock modes remain disabled pending reviewed
@@ -31,7 +32,7 @@ and [ROADMAP.md](ROADMAP.md). The actual spec is
 
 Legacy till/admin authentication and reports are repaired. The approved refund reversal foundation is now verified too:
 actual refund-account settlement, exact allocation remainders, safe-integer checks, and transaction-aborting stale-plan guards.
-**236 serverless/unit tests pass; the expanded full Worker suite passes 363/363.** A separate local D1.batch probe also
+**244 serverless/unit tests pass; the expanded full Worker suite passes 371/371.** A separate local D1.batch probe also
 verified stale/missing-allocation rollback of preceding vouchers/numbering and exact 333+334+333 cost conservation.
 The full run used Wrangler with unchanged migrations **0001–0005 only**, applied to a disposable local
 D1 outside the repo; default local and remote databases were not touched. See `PROGRESS.md` for exact commands.
@@ -41,11 +42,15 @@ JWT/API-key/MFA routes and schema-dependent auditing remain inactive; migration 
 ledger effects with idempotency, stable numbering, partial-return conservation and stale-plan rollback. GST-adjusting notes
 and non-`original_lot` modes remain intentionally disabled. Planner statements must run together with the caller's
 stock/document/journal writes in one D1 batch; planning alone restores no physical stock.
-Report tests verify stored credit-note effects, not successful creation. Retain the historical-registration
-snapshot/bill-reprint issue and unverified UI/device flows. Stay in spec Phase 2 stabilization, not expanded Phase 5/6 authentication.
+The admin UI now loads numeric line IDs/counters from `/admin/sales/:ref`, freezes
+the exact request body and idempotency key across uncertain retries, and requires
+confirmation for commercial notes. Retain the historical-registration
+snapshot/bill-reprint issue and unverified browser/device flows. Stay in spec
+Phase 2 stabilization, not expanded Phase 5/6 authentication.
 
-Original staged paths remain intact; recovery edits are unstaged. No commit or push was made because that
-would require separating inherited unfinished work. Do not use `git add .` or the historical migration instructions below.
+The local draft migration `0006`, worktree metadata, and `__agent__` artifacts
+remain excluded. Never use `git add .`; stage only reviewed product/test/docs
+paths and never apply migration `0006`.
 
 ---
 

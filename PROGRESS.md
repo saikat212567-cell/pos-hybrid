@@ -1,12 +1,12 @@
 # POS Hybrid — Development Progress Tracker
 
-**Last Updated:** 2026-10-01
+**Last Updated:** 2026-10-02
 
 **Branch:** `fix/refund-reversal-foundation`
 
-**Current HEAD:** `45222ce` (`chore: record verified recovery checkpoint`)
+**Current HEAD:** `af7390e` (`feat: add admin commercial refund flow`)
 
-**Remote:** `origin/fix/refund-reversal-foundation` is up to date with HEAD.
+**Remote:** `origin/fix/refund-reversal-foundation`
 
 ## Current Handoff — Read This First
 
@@ -25,16 +25,24 @@
 - The staged till Stock/Ledger/Refund panels were removed because they used a
   till credential for admin-only routes and sent an incompatible refund payload.
   Existing `admin.html` and `reports.html` remain the supported admin surfaces.
-- Project guidance and this handoff are committed and pushed in `45222ce`.
+- Project guidance and this handoff were previously committed in `45222ce`.
+- Admin-only commercial refund flow is now implemented in `web/admin.html` and
+  `web/admin.js`. It loads numeric sale-line IDs and returnable counters through
+  `/admin/sales/:ref`, freezes the request body and `client_ref` across unknown
+  result retries, prevents duplicate clicks, invalidates stale sale selections,
+  and requires explicit confirmation before posting.
+- The writer now validates normalized calendar dates in IST, conserves cumulative
+  invoice round-off across partial notes, and aborts stale invoice totals even
+  when concurrent notes affect different lines.
 
 ### Verified Results
 
 | Command | Result |
 |---|---|
-| `cd worker && npm run test:unit` | **236 passed, 0 failed** |
-| Full `npm test` against disposable Wrangler/D1 using migrations `0001`–`0005` only | **363 passed, 0 failed** |
+| `cd worker && npm run test:unit` | **244 passed, 0 failed** |
+| Full `npm test` against disposable Wrangler/D1 using migrations `0001`–`0005` only | **371 passed, 0 failed** |
 | `git diff --cached --check` before commit | Passed |
-| Branch push | `origin/fix/refund-reversal-foundation` up to date |
+| Branch push | Pending final push of `af7390e` and this handoff update |
 
 No production or default local database was used. Migration `0006` was not
 applied. The Wrangler process was stopped after testing.
@@ -73,10 +81,8 @@ approved schema/auth/audit plan.
 3. If continuing credit-note work, first obtain approval for the GST/history,
    commercial-note, damage, and ITC policy decisions. Add a failing endpoint
    test before changing posting logic or schema.
-4. If repairing the client, build an admin-only refund flow with generated
-   `client_ref`, numeric `sale_line_id`, top-level `stock_return_mode`, and
-   end-to-end idempotency/ledger/stock assertions. Do not expose refunds to the
-   till credential.
+4. Review the admin refund flow in a real browser on desktop and mobile widths.
+   Do not expose refunds to the till credential.
 5. Keep RBAC/MFA/audit migration work separately scoped. Do not activate or
    push migration `0006` as part of Phase 2 stabilization.
 6. After any change, run targeted tests, the full disposable suite, review the
