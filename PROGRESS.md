@@ -73,9 +73,10 @@
 - Codemagic's `android-fast-verify` is configured to require that identity and
   build/test `assembleRelease`, reporting the Hisab certificate. It is manual
   only until user uploads the key. No signed Hisab APK has been produced yet.
-- Current Hisab Gradle/YAML package changes have not been built in cloud yet.
-  GitHub's Android job will compile `assembleDebug` (package suffix `.debug`);
-  the Codemagic signed release workflow requires the user's uploaded key first.
+- GitHub Android run `37124271350` passed tests and `assembleDebug` for commit
+  `8ad0790` (debug package `com.hisab.pos.debug`). This verifies compilation only;
+  it does not sign a release APK or publish an artifact. Codemagic's signed
+  release workflow remains manual and requires the user's uploaded key.
 - The unrelated `SankarTeaShop.apk` and `sts-permanent.keystore` are excluded.
 - Historical inspection: old `app-debug.apk` was `com.example.pos`, version
   1.0/code 1; two old debug APKs had inconsistent signatures. Do not install any

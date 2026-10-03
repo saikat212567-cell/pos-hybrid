@@ -10,6 +10,9 @@ release; no Hisab key/APK has been created yet. User must generate a new key,
 securely back it up, upload it to Codemagic with that reference, then manually
 run `android-fast-verify`. The key cannot match the old POS certificate and is
 only for future Hisab updates. `SankarTeaShop` key/package is unrelated; do not use.
+GitHub Android run `37124271350` passed tests and debug compilation for
+`com.hisab.pos.debug`; no release APK was signed or published. Create and upload
+the Hisab-only keystore before manually running Codemagic `android-fast-verify`.
 
 ## Exact verified continuation point — read this before coding
 
