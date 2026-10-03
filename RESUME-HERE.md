@@ -1,6 +1,6 @@
 # Resume here
 
-Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Resume at the production D1 migration approval blocker recorded at the top of `PROGRESS.md`.
+Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Worker and schema are deployed; owner must run authenticated `/items` check described at top of `PROGRESS.md`.
 
 ## Exact verified continuation point — read this before coding
 
@@ -36,14 +36,15 @@ GST/history/ITC policy limits before changing posting behavior.
    without publishing a release. It requires secure variable group `posapi`
    containing deployed Worker `API_BASE` and till `API_TOKEN`; otherwise the APK
    intentionally fails instead of silently showing an empty catalog.
-9. R2 `pos-images` now exists and image-free API behavior is tested (245 unit
-   tests). Remote D1 only has migration 0001, with 8 products and no sales.
-   Current API requires 0002-0005. Get explicit approval before applying those
-   to production; 0006 is unreviewed and must never be applied. Then deploy, test
-   authenticated `/items` returns 200, and rebuild the APK.
+9. Production has migrations `0002`–`0005` applied with user approval; `0006`
+   remains pending and must never be applied. R2 exists. Worker version
+   `ce03d335-655f-4e2f-bd11-4b6228efbe8a` is deployed; D1 contains 10 products
+   and 0 sales. No-token `/items` returns expected 401. Owner must test with
+   local `POS_TOKEN` and confirm authenticated `/items` returns 200 plus items;
+   then launch the current APK and rebuild only if API config is stale.
 
-No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them. Do not repeat token setup or bucket creation unless verification finds them missing.
-Do not run the default migration command (it includes unreviewed 0006) or `git add .`. Do not deploy until the required remote migrations have been applied after explicit approval.
+No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them. Do not repeat credential, migration, bucket, or deploy setup unless verification fails.
+Never apply unreviewed migration `0006` or use `git add .`.
 
 ---
 

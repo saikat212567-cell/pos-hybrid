@@ -10,42 +10,47 @@
 
 ## Current Handoff — Read This First
 
-### API Connection — Production Schema Approval Required
+### API Connection — Deployed; Owner Auth Check Pending
 
-- No background processes remain running. All local Wrangler/web servers were
-  stopped before pausing.
-- Cloudflare till authentication was accepted: authenticated
-  `GET https://pos-api.saikat212567.workers.dev/items` returned `{"error":"not found"}`.
-  That indicates the live Worker still runs old code without `/items`.
-- Wrangler is authenticated as account `d5012374c363cd6c6c537da611edd9ff`.
-  At the user's request, R2 bucket `pos-images` has now been created there;
-  it is Standard/APAC, empty (0 objects, 0 B). R2 creation succeeded.
-- Current Cloudflare R2 Standard free tier is 10 GB-month, 1M Class A requests,
-  and 10M Class B requests each billing month; egress is free. Usage over these
-  allowances is chargeable (current rates: $0.015/GB-month, $4.50/M Class A,
-  $0.36/M Class B). There is no special sole-developer exemption; monitor billing.
-- Code change is prepared locally: image uploads and image GET return explicit
-  503 without an R2 binding, while catalog/sales remain independent; Wrangler
-  config binds the created `pos-images` bucket.
-- Unit tests pass at 245/245; the targeted API recovery suite passes 14/14,
-  including catalog-without-R2 and fail-closed image routes.
-- **Do not deploy yet:** remote D1 lists migrations `0002`–`0006` pending. Read-only
-  checks show the database has 8 products, 0 sales, and only legacy columns
-  `products(id,name,price,stock,category)`. Current `/items` and sale handlers
-  require migrations `0002`–`0005`.
-- Explicit approval to apply remote schema migrations has not been received. The
-  user answered the migration approval prompt by requesting R2 creation and
-  asking about pricing. Do not infer schema approval from that. `0002`–`0005` are
-  additive but change production schema/backfill, so obtain explicit consent.
-- Never apply `0006_user_rbac_audit.sql`: it is an unreviewed Phase 5 draft with
-  placeholder owner credentials. Once authorized, apply only `0002`–`0005` using
-  an allowlisted migrations directory/config that excludes `0006`; then verify
-  migration status, deploy the Worker, test `/items` with till token = HTTP 200,
-  and rebuild Codemagic. Do not invoke default migrations apply while `0006` exists.
-
-R2 creation is complete. The remaining API blocker is authorization to apply
-production migrations `0002`–`0005`; credential/Codemagic setup should not be
-repeated unless subsequent checks show a mismatch.
+- Current Worker is deployed at `https://pos-api.saikat212567.workers.dev`,
+  version `ce03d335-655f-4e2f-bd11-4b6228efbe8a`.
+- The user explicitly approved production migrations `0002`–`0005`. They were
+  applied using a temporary Wrangler allowlist (`migrations_pattern:
+  migrations/000[2-5]_*.sql`); that filter was removed immediately afterward.
+  Remote migration list now shows only `0006_user_rbac_audit.sql` pending.
+- Migration `0006` remains an unreviewed Phase 5 draft with placeholder owner
+  credentials. Never apply it or run default migration apply while it is present.
+- Production D1 now has 10 products and 0 sales. The original 8 items remain,
+  with two services seeded by `0002`. Current product schema includes catalog,
+  tax, item code, image-key and active fields.
+- R2 `pos-images` exists in account `d5012374c363cd6c6c537da611edd9ff`,
+  Standard/APAC, currently empty (0 objects / 0 B). Worker binds D1 `pos` and R2
+  `pos-images`.
+- `wrangler secret list` confirms `POS_TOKEN` and `POS_ADMIN_TOKEN` exist;
+  values were never read. An unauthenticated GET `/items` returns HTTP 401, the
+  expected auth gate. Owner's authenticated request using `POS_TOKEN` is needed
+  to verify HTTP 200 and the catalog.
+- Owner-side PowerShell check (prompts without echoing the token; never paste it
+  into chat):
+  ```powershell
+  $secure = Read-Host "Enter POS_TOKEN" -AsSecureString
+  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try {
+      $t = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+      $r = Invoke-WebRequest -Uri "https://pos-api.saikat212567.workers.dev/items" -Headers @{ Authorization = "Bearer $t" } -UseBasicParsing
+      $items = @($r.Content | ConvertFrom-Json)
+      "HTTP STATUS: $($r.StatusCode)"
+      "ITEM COUNT: $($items.Count)"
+  } catch {
+      if ($_.Exception.Response) { "HTTP STATUS: $([int]$_.Exception.Response.StatusCode)" }
+      else { "CONNECTION ERROR: $($_.Exception.Message)" }
+  } finally {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+      Remove-Variable t -ErrorAction SilentlyContinue
+  }
+  ```
+- API code and schema are deployed. Do not repeat token, bucket, migration or
+  deploy setup unless the authenticated check fails.
 
 ### What Is Done
 
@@ -80,7 +85,13 @@ repeated unless subsequent checks show a mismatch.
 | Command | Result |
 |---|---|
 | `cd worker && npm run test:unit` | **244 passed, 0 failed** |
+| Latest unit suite after optional R2 handling | **245 passed, 0 failed** |
+| `node --test test/api-recovery.test.js` | **14 passed, 0 failed** |
 | Full `npm test` against disposable Wrangler/D1 using migrations `0001`–`0005` only | **371 passed, 0 failed** |
+| Production D1 migration status | `0002`–`0005` applied with temporary allowlist; `0006` is the only pending migration |
+| Production D1 row counts | 10 products, 0 sales |
+| Production Worker deploy | Success, version `ce03d335-655f-4e2f-bd11-4b6228efbe8a`; D1 and R2 bindings confirmed |
+| Production API no-token request | `/items` returns expected HTTP 401; owner-authenticated 200 check remains |
 | Tabbit end-to-end admin refund flow | Created isolated test item/stock/sale, loaded sale, submitted 1-of-2 commercial return; UI showed `CN/26-27/0001` |
 | Disposable D1 post-check | Credit note 300 paise; tax adjustment 0; original-lot return; COGS reversed 500 paise; returned stock qty 1 / cost 500; credit-note voucher Dr=Cr=800 paise |
 | Till credential authorization | `GET /admin/sales/:ref` and `POST /credit-notes` each returned 401 with till token |
@@ -113,12 +124,11 @@ repeated unless subsequent checks show a mismatch.
   Codemagic UI and select `android-fast-verify`; no Codemagic build was triggered
   from this session. The user-observed build passed the API-configuration and
   Android test/debug-APK steps.
-- The first Codemagic APK had an empty catalog because the verification workflow
-  built without `API_BASE`/`API_TOKEN`, which Android injects into `BuildConfig`.
-  The workflow now imports secure group `posapi`, fails if either value is absent,
-  and passes both to Gradle. Add the deployed Worker URL and till `POS_TOKEN` in
-  Codemagic before rebuilding; never commit either value. The live Worker must
-  also be redeployed with the current `/items` route before the catalog can load.
+- The initial Codemagic APK had an empty catalog because it was built before
+  API credentials were configured. The workflow imports secure group `posapi`,
+  fails if either value is absent, and injects `API_BASE`/`API_TOKEN` into
+  `BuildConfig`. Worker is now deployed; rebuild only if the installed APK was
+  created before adding those variables.
 
 The browser flow used a fresh disposable D1 under
 `C:/Users/swastika/AppData/Local/Temp/kilo/refund-browser-d1` initialized by
@@ -161,11 +171,13 @@ approved schema/auth/audit plan.
   damage/write-off and ITC reversal require a separate reviewed implementation.
 - Active auth is still the legacy till/admin-token boundary. JWT, API-key, MFA,
   RBAC, and immutable audit behavior are not enabled or production-certified.
-- Android build/test passed on free GitHub-hosted Actions run `37061589888`.
-  Printer, device, deployment, and Codemagic-specific flows remain unexercised.
+- Android build/test passed on free GitHub-hosted Actions run `37061589888` and
+  the user-observed Codemagic run. Physical-device, printer, and deployment QA
+  remain unexercised.
 - No lint, format, or type-check scripts are configured in `worker/package.json`.
-- Production Worker deployment is currently blocked pending explicit approval to
-  apply remote D1 migrations `0002`–`0005`; R2 `pos-images` has been created.
+- The owner must run one authenticated `/items` request locally to verify HTTP 200
+  and catalog output. Wrangler confirms secret names, but cannot reveal values;
+  do not ask the owner to share a token in chat.
 
 ### Next Session Plan
 
@@ -180,8 +192,9 @@ approved schema/auth/audit plan.
 4. Plan a separate Android emulator/device verification pass for existing
    workflows; do not extend the app into unsupported refund/tax paths without
    first stabilizing the corresponding API and policy.
-5. After the API is deployed and `/items` is verified, rebuild Codemagic with the
-   existing secure `posapi` group. Workflow `android-fast-verify` uses free
+5. Owner: test authenticated `/items` using local `POS_TOKEN`. If 200 returns 10
+   items, launch the current APK; rebuild only if its `API_BASE` or `API_TOKEN`
+   predates the configured `posapi` group. `android-fast-verify` uses free
    `mac_mini_m2` and does not publish a release.
 6. Obtain CA confirmation for the GST reminder above before enabling tax
    adjustment or damage/ITC posting behavior.
