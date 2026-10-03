@@ -47,18 +47,39 @@ never lands in git history. Paste yours into your local copy only.
 
 ## 3. Android APK
 
-Built on Codemagic, with a non-release verification workflow and an opt-in
-GitHub Release workflow. Setup steps are in the comment at the top of
-[codemagic.yaml](codemagic.yaml). Short version:
+The new Android app is branded **Hisab** and uses package ID `com.hisab.pos` so
+it can be installed alongside the existing `com.example.pos` package. Its first
+version is declared by `android/version.json` (`1.0.0`, version code `1`). Do not
+change this application ID after publishing the Hisab app.
 
-1. codemagic.io → sign up with GitHub → add `pos-hybrid` as an Android app.
-2. Create variable group `posapi` with `API_BASE` set to the deployed Worker URL
-   and `API_TOKEN` set to the till `POS_TOKEN`. Mark both Secure. The verification
-   build fails clearly if either value is missing.
-3. Select `android-fast-verify` on
-   `fix/refund-reversal-foundation` → runs tests and builds a debug APK without
-   publishing a release.
-4. For production-style release publishing, push to `main` or tag a release:
+The old POS APK's signing key is unavailable; the new Hisab app therefore uses
+a separate permanent signing identity. All future Hisab release APKs must use
+the same Codemagic keystore. Setup:
+
+1. Generate a new keystore locally with Java `keytool`; keep a secure backup and
+   never commit it. Codemagic cannot recover it if lost.
+   For this Windows setup, run in PowerShell:
+
+   ```powershell
+   & "C:\Users\swastika\tools\jdk-17.0.20.1+1\bin\keytool.exe" -genkeypair -v -keystore "$env:USERPROFILE\Downloads\hisab-upload-key.jks" -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias hisab-upload
+   ```
+
+   Keytool prompts for store/key passwords and certificate identity. Do not send
+   passwords or the keystore to chat.
+2. In Codemagic Team settings → `codemagic.yaml settings` → `Code signing
+   identities` → `Android keystores`, upload it with reference
+   `hisab-upload-key`, alias `hisab-upload`, and its passwords. Keep the JKS
+   backup in a secure location separate from the repository.
+3. Ensure `posapi` contains the deployed Worker URL (`API_BASE`) and till token
+   (`API_TOKEN`, same as Cloudflare `POS_TOKEN`), both secrets as appropriate.
+4. Manually start `android-fast-verify` after the keystore is uploaded. It runs
+   Android tests and assembles a signed Hisab release APK; it does not publish an
+   app-store release. The workflow fails closed if API or signing values are
+   missing.
+5. Compare the APK's certificate on its first build, install alongside the old
+   POS app, and use the new Hisab keystore for every future Hisab update.
+
+The existing `android-debug` workflow is an opt-in release path for tagged builds:
 
 ```bash
 git tag v1.0 && git push origin v1.0

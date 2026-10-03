@@ -6,7 +6,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="POS"
+        android:label="Hisab"
         android:supportsRtl="true"
         android:theme="@style/Theme.Material3.DayNight">
 

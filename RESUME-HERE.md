@@ -1,21 +1,15 @@
 # Resume here
 
-Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Live `/items` has returned HTTP 200 with catalog JSON using the newly rotated POS token; update Codemagic and rebuild the APK.
+Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. User selected a side-by-side app named Hisab; package/version/signing configuration is locally prepared, awaiting Hisab keystore creation/upload and cloud verification.
 
-Android version metadata now lives in `android/version.json` (versionCode 2,
-versionName 1.0.1; app ID remains `com.example.pos`). The next Codemagic run prints
-the debug signing fingerprint. Compare it with the existing APK before upgrading;
-never uninstall the old app to bypass a signature mismatch while offline sales
-may be queued. GitHub Android run `37116201697` passed tests and debug assembly.
-APK inspection found the installed-release candidate `app-debug.apk` is code 1
-with signer SHA-256 `7b4d8e7b...`; two code-2 APKs have different signers from
-each other and from the old app. Local default debug keystore is also different.
-Do not install/uninstall. Find the original private keystore to retain upgrade
-compatibility; otherwise make an explicit side-by-side/data-export plan.
-`sts-permanent.keystore` belongs to the user's separate `SankarTeaShop` app and
-must not be used for POS. Codemagic Code signing identities could not be inspected
-because the browser session was unauthenticated. Owner should check the POS app's
-Code signing identities and compare to `7b4d8e7b...`; never share passwords/keys.
+The user selected a side-by-side app called Hisab. New package is
+`com.hisab.pos` (debug package `.debug`), version is in `android/version.json`
+(1.0.0/code 1). Old `com.example.pos` remains installed and must not be removed.
+Codemagic requires new persistent identity ref `hisab-upload-key` to sign the
+release; no Hisab key/APK has been created yet. User must generate a new key,
+securely back it up, upload it to Codemagic with that reference, then manually
+run `android-fast-verify`. The key cannot match the old POS certificate and is
+only for future Hisab updates. `SankarTeaShop` key/package is unrelated; do not use.
 
 ## Exact verified continuation point — read this before coding
 

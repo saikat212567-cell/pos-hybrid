@@ -15,10 +15,10 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.pos"
+        applicationId = "com.hisab.pos"
         minSdk = 24
         targetSdk = 34
-        // Keep applicationId stable for upgrades; increment versionCode per APK.
+        // New side-by-side Hisab package starts at version 1.
         versionCode = appVersionCode
         versionName = appVersionName
 
@@ -35,9 +35,25 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        create("hisab") {
+            val keystorePath = System.getenv("CM_KEYSTORE_PATH")
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("CM_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("CM_KEY_ALIAS")
+                keyPassword = System.getenv("CM_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
-            isMinifyEnabled = false        // unsigned debug-style release; sign when you ship
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("hisab")
         }
     }
 

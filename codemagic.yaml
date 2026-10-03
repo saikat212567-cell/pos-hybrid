@@ -1,12 +1,11 @@
-# Codemagic build config. The fast verification workflow builds the APK in the
-# cloud without publishing it. The release workflow below remains opt-in.
+# Codemagic build config for the side-by-side Hisab Android app.
 # Docs: https://docs.codemagic.io/yaml/yaml-getting-started/
 #
 # One-time setup in the Codemagic UI (I can't do this part for you):
 #   1. codemagic.io -> sign up with GitHub -> authorize access to pos-hybrid.
 #   2. Add application -> pick saikat212567-cell/pos-hybrid -> "Android app".
-#   3. It detects this file automatically. Pick `android-fast-verify` for the
-#      feature branch, or `android-debug` for main/tag release builds.
+#   3. It detects this file automatically. Pick `android-fast-verify` to build
+#      the Hisab side-by-side app on the feature branch.
 #   4. Create group `posapi` with the deployed Worker URL and till token:
 #        API_BASE  = https://pos-api.your-subdomain.workers.dev
 #        API_TOKEN = the value you set with `wrangler secret put POS_TOKEN`
@@ -15,20 +14,26 @@
 #      (github.com/settings/tokens -> fine-grained -> Contents: read+write
 #       on saikat212567-cell/pos-hybrid)
 #      Tick "Secure" on all three so they're masked in build logs.
-#   6. Start your first build.
+#   6. Under Team settings > codemagic.yaml settings > Code signing identities
+#      > Android keystores, upload a new Hisab-only keystore with reference name
+#      `hisab-upload-key`. Keep a secure backup. Do not use the unrelated Sankar key.
+#   7. Start `android-fast-verify` only after the keystore has been uploaded.
 #
-# `android-fast-verify` uses the free individual-plan `mac_mini_m2` machine.
+# `android-fast-verify` is manually triggered after the keystore is configured
+# and uses free individual-plan `mac_mini_m2`.
 # Linux X2 is faster but requires a billing-enabled Codemagic plan.
 # Push a v* tag     -> the opt-in release workflow publishes to GitHub Releases.
 
 workflows:
   android-fast-verify:
-    name: POS Android Fast Verification
+    name: Hisab Android Verification
     instance_type: mac_mini_m2
     max_build_duration: 30
 
     environment:
       java: 17
+      android_signing:
+        - hisab-upload-key
       groups:
         - posapi      # API_BASE, API_TOKEN; mark both Secure
 
@@ -37,32 +42,24 @@ workflows:
         - $HOME/.gradle/caches
         - $HOME/.gradle/wrapper
 
-    triggering:
-      events:
-        - push
-        - pull_request
-      branch_patterns:
-        - pattern: fix/refund-reversal-foundation
-          include: true
-        - pattern: main
-          include: true
-          source: false
-      cancel_previous_builds: true
-
     scripts:
       - name: Require API configuration
         script: |
           test -n "$API_BASE" || { echo "API_BASE is missing"; exit 1; }
           test -n "$API_TOKEN" || { echo "API_TOKEN is missing"; exit 1; }
+          test -n "$CM_KEYSTORE_PATH" || { echo "Hisab keystore is missing"; exit 1; }
+          test -n "$CM_KEYSTORE_PASSWORD" || { echo "Keystore password is missing"; exit 1; }
+          test -n "$CM_KEY_ALIAS" || { echo "Keystore alias is missing"; exit 1; }
+          test -n "$CM_KEY_PASSWORD" || { echo "Key password is missing"; exit 1; }
 
-      - name: Report debug signing certificate
+      - name: Report Hisab signing certificate
         working_directory: android
         script: gradle :app:signingReport --no-daemon
 
-      - name: Android tests and debug APK
+      - name: Android tests and signed Hisab APK
         working_directory: android
         script: |
-          gradle test assembleDebug --no-daemon \
+          gradle test assembleRelease --no-daemon \
             -PapiBase="$API_BASE" \
             -PapiToken="$API_TOKEN"
 
@@ -79,16 +76,15 @@ workflows:
           failure: true
 
   android-debug:
-    name: POS Android Debug APK
-    # Release workflow. Keep on the free machine until paid billing is enabled.
+    name: Hisab Android Release APK
     instance_type: mac_mini_m2
     max_build_duration: 30
 
     environment:
       java: 17
+      android_signing:
+        - hisab-upload-key
       # Credentials come from this variable group, never from source.
-      # Until you create it in the UI the build still succeeds — it just
-      # produces an APK that can't reach Supabase (see the guard below).
       groups:
         - posapi      # API_BASE, API_TOKEN
         - github      # GH_TOKEN, for publishing releases
@@ -113,17 +109,14 @@ workflows:
       cancel_previous_builds: true
 
     scripts:
-      - name: Warn if API credentials are missing
+      - name: Require API and Hisab signing configuration
         script: |
-          # Not a hard failure: a credential-less APK is still useful for
-          # checking the UI. But it would silently never sync, so say so.
-          if [ -z "$API_BASE" ] || [ -z "$API_TOKEN" ]; then
-            echo "WARNING: API_BASE / API_TOKEN are not set."
-            echo "The APK will build but cannot reach the POS API."
-            echo "Set them in the 'posapi' variable group in the Codemagic UI."
-          else
-            echo "API credentials present."
-          fi
+          test -n "$API_BASE" || { echo "API_BASE is missing"; exit 1; }
+          test -n "$API_TOKEN" || { echo "API_TOKEN is missing"; exit 1; }
+          test -n "$CM_KEYSTORE_PATH" || { echo "Hisab keystore is missing"; exit 1; }
+          test -n "$CM_KEYSTORE_PASSWORD" || { echo "Keystore password is missing"; exit 1; }
+          test -n "$CM_KEY_ALIAS" || { echo "Keystore alias is missing"; exit 1; }
+          test -n "$CM_KEY_PASSWORD" || { echo "Key password is missing"; exit 1; }
 
       - name: Unit tests
         working_directory: android
@@ -131,10 +124,10 @@ workflows:
         # wrapper jar to keep in sync.
         script: gradle test
 
-      - name: Assemble debug APK
+      - name: Assemble signed Hisab APK
         working_directory: android
         script: |
-          gradle assembleDebug \
+          gradle assembleRelease \
             -PapiBase="$API_BASE" \
             -PapiToken="$API_TOKEN"
 
