@@ -12,6 +12,9 @@ with signer SHA-256 `7b4d8e7b...`; two code-2 APKs have different signers from
 each other and from the old app. Local default debug keystore is also different.
 Do not install/uninstall. Find the original private keystore to retain upgrade
 compatibility; otherwise make an explicit side-by-side/data-export plan.
+A candidate `Downloads\sts-permanent.keystore` was found but is not verified
+and may belong to `com.sankartea.shop`. Compare its `keytool -list -v` SHA-256
+locally against `7b4d8e7b...` before using it; never share its password/key.
 
 ## Exact verified continuation point — read this before coding
 
