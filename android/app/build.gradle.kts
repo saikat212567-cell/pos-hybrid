@@ -4,6 +4,12 @@ plugins {
     id("com.google.devtools.ksp")          // Room annotation processing
 }
 
+val appVersion = groovy.json.JsonSlurper().parse(rootProject.file("version.json")) as Map<*, *>
+val appVersionCode = (appVersion["versionCode"] as? Number)?.toInt()
+    ?: error("android/version.json must contain an integer versionCode")
+val appVersionName = appVersion["versionName"] as? String
+    ?: error("android/version.json must contain a string versionName")
+
 android {
     namespace = "com.example.pos"
     compileSdk = 34
@@ -12,8 +18,9 @@ android {
         applicationId = "com.example.pos"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // Keep applicationId stable for upgrades; increment versionCode per APK.
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         // Injected from gradle properties / CI secrets, never hardcoded in
         // source. Read at runtime as BuildConfig.API_BASE / API_TOKEN.

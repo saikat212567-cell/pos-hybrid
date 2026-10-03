@@ -55,6 +55,10 @@ workflows:
           test -n "$API_BASE" || { echo "API_BASE is missing"; exit 1; }
           test -n "$API_TOKEN" || { echo "API_TOKEN is missing"; exit 1; }
 
+      - name: Report debug signing certificate
+        working_directory: android
+        script: gradle :app:signingReport --no-daemon
+
       - name: Android tests and debug APK
         working_directory: android
         script: |
