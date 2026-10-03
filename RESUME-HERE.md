@@ -1,6 +1,6 @@
 # Resume here
 
-Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Worker and schema are deployed; owner must run authenticated `/items` check described at top of `PROGRESS.md`.
+Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Live `/items` has returned HTTP 200 with catalog JSON using the newly rotated POS token; update Codemagic and rebuild the APK.
 
 ## Exact verified continuation point — read this before coding
 
@@ -39,9 +39,11 @@ GST/history/ITC policy limits before changing posting behavior.
 9. Production has migrations `0002`–`0005` applied with user approval; `0006`
    remains pending and must never be applied. R2 exists. Worker version
    `ce03d335-655f-4e2f-bd11-4b6228efbe8a` is deployed; D1 contains 10 products
-   and 0 sales. No-token `/items` returns expected 401. Owner must test with
-   local `POS_TOKEN` and confirm authenticated `/items` returns 200 plus items;
-   then launch the current APK and rebuild only if API config is stale.
+   and 0 sales. No-token `/items` returns expected 401; the owner's newly
+   rotated POS token returns 200 with catalog JSON. Update Codemagic `API_TOKEN`
+   with that same value, rebuild, install the new APK, and verify catalog there.
+   Admin token rotation was requested but completion is not confirmed; never put
+   `POS_ADMIN_TOKEN` in Codemagic or Android.
 
 No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them. Do not repeat credential, migration, bucket, or deploy setup unless verification fails.
 Never apply unreviewed migration `0006` or use `git add .`.

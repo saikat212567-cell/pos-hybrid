@@ -10,7 +10,7 @@
 
 ## Current Handoff — Read This First
 
-### API Connection — Deployed; Owner Auth Check Pending
+### API Connection — Verified; APK Rebuild Pending
 
 - Current Worker is deployed at `https://pos-api.saikat212567.workers.dev`,
   version `ce03d335-655f-4e2f-bd11-4b6228efbe8a`.
@@ -27,9 +27,16 @@
   Standard/APAC, currently empty (0 objects / 0 B). Worker binds D1 `pos` and R2
   `pos-images`.
 - `wrangler secret list` confirms `POS_TOKEN` and `POS_ADMIN_TOKEN` exist;
-  values were never read. An unauthenticated GET `/items` returns HTTP 401, the
-  expected auth gate. Owner's authenticated request using `POS_TOKEN` is needed
-  to verify HTTP 200 and the catalog.
+  values were never read. Unauthenticated GET `/items` returns expected HTTP 401.
+- The owner rotated `POS_TOKEN` and locally verified authenticated `/items`
+  returns HTTP 200 plus catalog JSON. The response contains products; a prior
+  PowerShell count of `1` was a parsing/counting issue, not an empty API catalog.
+- Codemagic `API_TOKEN` must now be updated to the new `POS_TOKEN`, then rebuild
+  `android-fast-verify`; the installed APK still has whichever token was present
+  at build time. `API_BASE` remains the deployed Worker URL.
+- Admin-token rotation was requested, but completion is not confirmed. If not
+  rotated yet, handle `POS_ADMIN_TOKEN` separately and store it securely; never
+  add it to Codemagic or the Android APK.
 - Owner-side PowerShell check (prompts without echoing the token; never paste it
   into chat):
   ```powershell
@@ -91,7 +98,7 @@
 | Production D1 migration status | `0002`–`0005` applied with temporary allowlist; `0006` is the only pending migration |
 | Production D1 row counts | 10 products, 0 sales |
 | Production Worker deploy | Success, version `ce03d335-655f-4e2f-bd11-4b6228efbe8a`; D1 and R2 bindings confirmed |
-| Production API no-token request | `/items` returns expected HTTP 401; owner-authenticated 200 check remains |
+| Production API checks | No-token `/items` returns expected 401; owner's new till token returns HTTP 200 and catalog JSON |
 | Tabbit end-to-end admin refund flow | Created isolated test item/stock/sale, loaded sale, submitted 1-of-2 commercial return; UI showed `CN/26-27/0001` |
 | Disposable D1 post-check | Credit note 300 paise; tax adjustment 0; original-lot return; COGS reversed 500 paise; returned stock qty 1 / cost 500; credit-note voucher Dr=Cr=800 paise |
 | Till credential authorization | `GET /admin/sales/:ref` and `POST /credit-notes` each returned 401 with till token |
@@ -192,10 +199,9 @@ approved schema/auth/audit plan.
 4. Plan a separate Android emulator/device verification pass for existing
    workflows; do not extend the app into unsupported refund/tax paths without
    first stabilizing the corresponding API and policy.
-5. Owner: test authenticated `/items` using local `POS_TOKEN`. If 200 returns 10
-   items, launch the current APK; rebuild only if its `API_BASE` or `API_TOKEN`
-   predates the configured `posapi` group. `android-fast-verify` uses free
-   `mac_mini_m2` and does not publish a release.
+5. Owner: copy the newly verified till token into Codemagic `posapi.API_TOKEN`,
+   run `android-fast-verify`, install that freshly built APK, and check catalog.
+   The workflow uses free `mac_mini_m2` and does not publish a release.
 6. Obtain CA confirmation for the GST reminder above before enabling tax
    adjustment or damage/ITC posting behavior.
 7. When deployment/admin-login work is scheduled, design a server-side
