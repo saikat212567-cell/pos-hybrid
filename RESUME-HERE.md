@@ -7,8 +7,11 @@ versionName 1.0.1; app ID remains `com.example.pos`). The next Codemagic run pri
 the debug signing fingerprint. Compare it with the existing APK before upgrading;
 never uninstall the old app to bypass a signature mismatch while offline sales
 may be queued. GitHub Android run `37116201697` passed tests and debug assembly.
-No stable keystore is present/configured, so same-certificate upgrade
-compatibility must be confirmed from old/new APK fingerprints.
+APK inspection found the installed-release candidate `app-debug.apk` is code 1
+with signer SHA-256 `7b4d8e7b...`; two code-2 APKs have different signers from
+each other and from the old app. Local default debug keystore is also different.
+Do not install/uninstall. Find the original private keystore to retain upgrade
+compatibility; otherwise make an explicit side-by-side/data-export plan.
 
 ## Exact verified continuation point — read this before coding
 
