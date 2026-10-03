@@ -12,9 +12,10 @@ with signer SHA-256 `7b4d8e7b...`; two code-2 APKs have different signers from
 each other and from the old app. Local default debug keystore is also different.
 Do not install/uninstall. Find the original private keystore to retain upgrade
 compatibility; otherwise make an explicit side-by-side/data-export plan.
-A candidate `Downloads\sts-permanent.keystore` was found but is not verified
-and may belong to `com.sankartea.shop`. Compare its `keytool -list -v` SHA-256
-locally against `7b4d8e7b...` before using it; never share its password/key.
+`sts-permanent.keystore` belongs to the user's separate `SankarTeaShop` app and
+must not be used for POS. Codemagic Code signing identities could not be inspected
+because the browser session was unauthenticated. Owner should check the POS app's
+Code signing identities and compare to `7b4d8e7b...`; never share passwords/keys.
 
 ## Exact verified continuation point — read this before coding
 

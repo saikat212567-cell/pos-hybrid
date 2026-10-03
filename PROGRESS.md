@@ -88,11 +88,13 @@
   private key. Search Codemagic code-signing identities/old backups; do not invent
   a new key and call it the same certificate. If irrecoverable, decide between a
   side-by-side new application ID or a deliberate data-export/reinstall plan.
-- A local candidate named `sts-permanent.keystore` exists in Downloads (and a
-  backup source tree), but is unverified and may instead belong to the separate
-  `com.sankartea.shop` app. Do not use/upload it until its `keytool -list -v`
-  SHA-256 certificate fingerprint is compared with the POS old certificate
-  `7b4d8e7b...`. The password must be entered locally, never sent in chat.
+- The user confirmed `SankarTeaShop.apk` and `sts-permanent.keystore` belong to
+  a separate unrelated app. Exclude them completely from this POS signing work.
+- Codemagic identity inspection redirected to its login page, so no signing
+  identities were visible in the current browser session; no credentials were
+  requested or entered. The owner can check the POS app's Code signing identities
+  in Codemagic and compare any identity's certificate to the old POS fingerprint
+  `7b4d8e7b...`.
 
 ### What Is Done
 
