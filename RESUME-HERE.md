@@ -6,8 +6,9 @@ Android version metadata now lives in `android/version.json` (versionCode 2,
 versionName 1.0.1; app ID remains `com.example.pos`). The next Codemagic run prints
 the debug signing fingerprint. Compare it with the existing APK before upgrading;
 never uninstall the old app to bypass a signature mismatch while offline sales
-may be queued. No stable keystore is present/configured, so same-certificate
-upgrade compatibility must be confirmed from the APK fingerprints.
+may be queued. GitHub Android run `37116201697` passed tests and debug assembly.
+No stable keystore is present/configured, so same-certificate upgrade
+compatibility must be confirmed from old/new APK fingerprints.
 
 ## Exact verified continuation point — read this before coding
 

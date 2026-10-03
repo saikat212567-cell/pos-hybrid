@@ -66,6 +66,8 @@
 - `android/version.json` now declares `versionCode: 2`, `versionName: "1.0.1"`;
   `app/build.gradle.kts` reads these values. This advances from the old APK's
   configured code 1/name 1.0 so Android recognizes an upgrade.
+- Android cloud run `37116201697` succeeded on commit `db1b1fa`: Android tests
+  and `assembleDebug` passed with the version JSON integration.
 - Builds currently use Gradle's `debug` signing configuration; there is no
   keystore checked into the repo or configured in Codemagic. Codemagic now emits
   `:app:signingReport` during verification. Compare its debug certificate SHA-256
