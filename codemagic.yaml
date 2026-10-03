@@ -16,7 +16,8 @@
 #      Tick "Secure" on all three so they're masked in build logs.
 #   6. Under Team settings > codemagic.yaml settings > Code signing identities
 #      > Android keystores, upload a new Hisab-only keystore with reference name
-#      `hisab-upload-key`. Keep a secure backup. Do not use the unrelated Sankar key.
+#      `hisab-upload-key` and key alias `hisab-upload`. Keep a secure backup.
+#      Do not use the unrelated Sankar key.
 #   7. Start `android-fast-verify` only after the keystore has been uploaded.
 #
 # `android-fast-verify` is manually triggered after the keystore is configured
@@ -33,6 +34,7 @@ workflows:
     environment:
       java: 17
       android_signing:
+        # Codemagic identity reference: hisab-upload-key; its key alias is hisab-upload.
         - hisab-upload-key
       groups:
         - posapi      # API_BASE, API_TOKEN; mark both Secure
@@ -83,6 +85,7 @@ workflows:
     environment:
       java: 17
       android_signing:
+        # Identity reference hisab-upload-key; configure alias hisab-upload in Codemagic.
         - hisab-upload-key
       # Credentials come from this variable group, never from source.
       groups:
