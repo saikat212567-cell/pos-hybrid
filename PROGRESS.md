@@ -10,6 +10,43 @@
 
 ## Current Handoff — Read This First
 
+### API Connection — Production Schema Approval Required
+
+- No background processes remain running. All local Wrangler/web servers were
+  stopped before pausing.
+- Cloudflare till authentication was accepted: authenticated
+  `GET https://pos-api.saikat212567.workers.dev/items` returned `{"error":"not found"}`.
+  That indicates the live Worker still runs old code without `/items`.
+- Wrangler is authenticated as account `d5012374c363cd6c6c537da611edd9ff`.
+  At the user's request, R2 bucket `pos-images` has now been created there;
+  it is Standard/APAC, empty (0 objects, 0 B). R2 creation succeeded.
+- Current Cloudflare R2 Standard free tier is 10 GB-month, 1M Class A requests,
+  and 10M Class B requests each billing month; egress is free. Usage over these
+  allowances is chargeable (current rates: $0.015/GB-month, $4.50/M Class A,
+  $0.36/M Class B). There is no special sole-developer exemption; monitor billing.
+- Code change is prepared locally: image uploads and image GET return explicit
+  503 without an R2 binding, while catalog/sales remain independent; Wrangler
+  config binds the created `pos-images` bucket.
+- Unit tests pass at 245/245; the targeted API recovery suite passes 14/14,
+  including catalog-without-R2 and fail-closed image routes.
+- **Do not deploy yet:** remote D1 lists migrations `0002`–`0006` pending. Read-only
+  checks show the database has 8 products, 0 sales, and only legacy columns
+  `products(id,name,price,stock,category)`. Current `/items` and sale handlers
+  require migrations `0002`–`0005`.
+- Explicit approval to apply remote schema migrations has not been received. The
+  user answered the migration approval prompt by requesting R2 creation and
+  asking about pricing. Do not infer schema approval from that. `0002`–`0005` are
+  additive but change production schema/backfill, so obtain explicit consent.
+- Never apply `0006_user_rbac_audit.sql`: it is an unreviewed Phase 5 draft with
+  placeholder owner credentials. Once authorized, apply only `0002`–`0005` using
+  an allowlisted migrations directory/config that excludes `0006`; then verify
+  migration status, deploy the Worker, test `/items` with till token = HTTP 200,
+  and rebuild Codemagic. Do not invoke default migrations apply while `0006` exists.
+
+R2 creation is complete. The remaining API blocker is authorization to apply
+production migrations `0002`–`0005`; credential/Codemagic setup should not be
+repeated unless subsequent checks show a mismatch.
+
 ### What Is Done
 
 - Phase 2 refund/reversal foundation is implemented and tested.
@@ -127,9 +164,8 @@ approved schema/auth/audit plan.
 - Android build/test passed on free GitHub-hosted Actions run `37061589888`.
   Printer, device, deployment, and Codemagic-specific flows remain unexercised.
 - No lint, format, or type-check scripts are configured in `worker/package.json`.
-- Production Worker deployment is currently blocked by the missing `pos-images`
-  R2 bucket. R2 is not being created until a free, long-term image-storage
-  decision is made; the catalog API does not require images to function.
+- Production Worker deployment is currently blocked pending explicit approval to
+  apply remote D1 migrations `0002`–`0005`; R2 `pos-images` has been created.
 
 ### Next Session Plan
 
@@ -144,10 +180,9 @@ approved schema/auth/audit plan.
 4. Plan a separate Android emulator/device verification pass for existing
    workflows; do not extend the app into unsupported refund/tax paths without
    first stabilizing the corresponding API and policy.
-5. Connect the repository in Codemagic UI, select the free `mac_mini_m2`, and
-   run only `android-fast-verify`. Do not configure release variables or tags
-   for this verification step. Use `linux_x2` only after deliberately enabling
-   billing.
+5. After the API is deployed and `/items` is verified, rebuild Codemagic with the
+   existing secure `posapi` group. Workflow `android-fast-verify` uses free
+   `mac_mini_m2` and does not publish a release.
 6. Obtain CA confirmation for the GST reminder above before enabling tax
    adjustment or damage/ITC posting behavior.
 7. When deployment/admin-login work is scheduled, design a server-side

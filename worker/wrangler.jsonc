@@ -16,11 +16,8 @@
     }
   ],
 
-  // Item tile images. Create the bucket before deploying:
-  //   npx wrangler r2 bucket create pos-images
-  // `wrangler dev --local` simulates this on disk, so tests need no bucket.
-  // The upload route returns 503 rather than crashing if the binding is absent,
-  // so a deploy without the bucket degrades to a catalog with no photos.
+  // The tile-image bucket is optional at runtime: catalog/sales keep working
+  // without it and image routes return 503. Bind the user's provisioned bucket.
   "r2_buckets": [
     {
       "binding": "IMAGES",

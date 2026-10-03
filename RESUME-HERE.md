@@ -1,6 +1,6 @@
 # Resume here
 
-Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Resume at the Cloudflare R2 deployment blocker recorded at the top of `PROGRESS.md`.
+Current checkpoint: **2026-10-03**, branch **`fix/refund-reversal-foundation`**. Resume at the production D1 migration approval blocker recorded at the top of `PROGRESS.md`.
 
 ## Exact verified continuation point — read this before coding
 
@@ -36,14 +36,14 @@ GST/history/ITC policy limits before changing posting behavior.
    without publishing a release. It requires secure variable group `posapi`
    containing deployed Worker `API_BASE` and till `API_TOKEN`; otherwise the APK
    intentionally fails instead of silently showing an empty catalog.
-9. Cloudflare `/items` currently returns authenticated `not found` because the
-   live Worker has not received the current code. Deployment is blocked by the
-   missing paid `pos-images` R2 bucket. Decide on a free image policy first;
-   then remove the binding/disable image routes or explicitly approve storage,
-   deploy current Worker code, retest `/items`, and rebuild the APK.
+9. R2 `pos-images` now exists and image-free API behavior is tested (245 unit
+   tests). Remote D1 only has migration 0001, with 8 products and no sales.
+   Current API requires 0002-0005. Get explicit approval before applying those
+   to production; 0006 is unreviewed and must never be applied. Then deploy, test
+   authenticated `/items` returns 200, and rebuild the APK.
 
-No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them. The user requested a pause after this deployment blocker; continue from that point without repeating credential setup.
-Do not run the default migration command (it includes unreviewed 0006), `git add .`, or deployment commands before resolving the R2/free-storage decision above.
+No test servers remain running. Temporary state/log paths in `PROGRESS.md` may expire; recreate test state rather than relying on them. Do not repeat token setup or bucket creation unless verification finds them missing.
+Do not run the default migration command (it includes unreviewed 0006) or `git add .`. Do not deploy until the required remote migrations have been applied after explicit approval.
 
 ---
 

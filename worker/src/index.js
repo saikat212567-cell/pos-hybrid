@@ -143,7 +143,9 @@ export default {
         routeId('/items/:id', 'DELETE', 'inventory.write', p => deactivateItem(p.id, env)) ??
         routeId('/items/:id/image', 'POST', 'inventory.write', p => uploadItemImage(p.id, request, env)) ??
         routeId('/items/:id/opening-stock', 'POST', 'inventory.write', p => addOpeningStock(p.id, request, env)) ??
-        routeId('/images/items/:id', 'GET', 'inventory.read', p => getImage(env, `items/${p.id}`, cors)) ??
+        routeId('/images/items/:id', 'GET', 'inventory.read', p => env.IMAGES
+          ? getImage(env, `items/${p.id}`, cors)
+          : json({ error: 'image storage not configured' }, 503)) ??
         routeId('/sales/:ref', 'GET', 'sales.print', p => getSale(p.ref, url, env)) ??
         (auth ? json({ error: 'not found' }, 404) : json({ error: 'unauthorized' }, 401))
       );
@@ -523,7 +525,7 @@ async function deactivateItem(id, env) {
  */
 async function uploadItemImage(id, request, env) {
   if (!env.IMAGES) {
-    return json({ error: 'image storage not configured (no R2 binding)' }, 503);
+    return json({ error: 'image storage not configured' }, 503);
   }
 
   const exists = await env.DB.prepare('SELECT id FROM products WHERE id = ?').bind(id).first();

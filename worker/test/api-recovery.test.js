@@ -154,6 +154,28 @@ test('image query credential is restricted to the public till token and image ro
   }
 });
 
+test('catalog remains available without optional image storage and image routes return 503', async t => {
+  const f = fixture(t);
+  delete f.env.IMAGES;
+
+  const catalog = await f.call('/items');
+  assert.equal(catalog.status, 200);
+  assert.ok((await catalog.json()).length > 0);
+
+  const upload = await f.call('/items/espresso/image', {
+    method: 'POST', token: ADMIN, body: {},
+  });
+  assert.equal(upload.status, 503);
+  assert.deepEqual(await upload.json(), { error: 'image storage not configured' });
+
+  const image = await f.call('/images/items/espresso');
+  assert.equal(image.status, 503);
+  assert.deepEqual(await image.json(), { error: 'image storage not configured' });
+
+  const denied = await f.call('/images/items/espresso', { token: null });
+  assert.equal(denied.status, 401, 'missing image storage must not bypass auth');
+});
+
 test('path matching precedes authorization and decoding follows authorization', async t => {
   const f = fixture(t);
   assert.equal((await f.call('/sales/missing-reference')).status, 404);
